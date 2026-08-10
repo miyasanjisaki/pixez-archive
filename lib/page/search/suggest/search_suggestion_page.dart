@@ -27,6 +27,7 @@ import 'package:pixez/page/search/suggest/suggestion_store.dart';
 import 'package:pixez/page/soup/soup_page.dart';
 import 'package:pixez/page/user/users_page.dart';
 import 'package:pixez/utils/haptic_util.dart';
+import 'package:pixez/utils/search_query_parser.dart';
 
 class SearchSuggestionPage extends StatefulWidget {
   final String? preword;
@@ -244,26 +245,22 @@ class _SearchSuggestionPageState extends State<SearchSuggestionPage> {
 
   Future<void> onChange(String query) async {
     tagGroup.clear();
-    var tags = query
-        .split(" ")
-        .map((e) => e.trim())
-        .takeWhile((value) => value.isNotEmpty);
+    final normalizedQuery = query.trim();
+    final tags = parseSearchQueryTerms(normalizedQuery);
     if (tags.length > 1) tagGroup.addAll(tags);
     setState(() {});
-    bool isNum = int.tryParse(query) != null;
+    bool isNum = int.tryParse(normalizedQuery) != null;
     setState(() {
       idV = isNum;
     });
-    if (query.startsWith('https://')) {
-      Leader.pushWithUri(context, Uri.parse(query));
+    if (normalizedQuery.startsWith('https://')) {
+      Leader.pushWithUri(context, Uri.parse(normalizedQuery));
       _filter.clear();
       return;
     }
-    var word = query.trim();
-    if (word.isEmpty) return;
-    if (isNum && word.length > 5) return; //超过五个数字应该就不需要给建议了吧
-    word = tags.last;
-    if (word.isEmpty) return;
+    if (tags.isEmpty) return;
+    final word = tags.last;
+    if (isNum && normalizedQuery.length > 5) return; //超过五个数字应该就不需要给建议了吧
     _suggestionStore.fetch(word);
   }
 

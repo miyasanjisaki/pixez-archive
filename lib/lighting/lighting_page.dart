@@ -375,6 +375,7 @@ class _LightingListState extends State<LightingList> {
         store: visibleStores[index],
         iStores: visibleStores,
         iStoresProvider: _visibleStores,
+        showStats: widget.comparator != null,
       );
     }, childCount: visibleStores.length + (_canManuallyLoadMore ? 1 : 0));
   }
@@ -412,6 +413,7 @@ class _LightingListState extends State<LightingList> {
       lightingStore: _store,
       iStores: visibleStores,
       iStoresProvider: _visibleStores,
+      showStats: widget.comparator != null,
     );
   }
 }

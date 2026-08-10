@@ -41,6 +41,7 @@ class IllustCard extends StatefulWidget {
   final List<IllustStore>? iStores;
   final List<IllustStore> Function()? iStoresProvider;
   final bool needToBan;
+  final bool showStats;
   final LightingStore lightingStore;
 
   IllustCard({
@@ -49,6 +50,7 @@ class IllustCard extends StatefulWidget {
     this.iStores,
     this.iStoresProvider,
     this.needToBan = false,
+    this.showStats = false,
   });
 
   @override
@@ -163,7 +165,12 @@ class _IllustCardState extends State<IllustCard> {
 
   Widget cardText() {
     if (store.illusts!.type != "illust") {
-      return Text(store.illusts!.type, style: TextStyle(color: Colors.white));
+      final typeLabel = switch (store.illusts!.type) {
+        'manga' => I18n.of(context).manga,
+        'ugoira' => I18n.of(context).ugoira_filter,
+        final type => type,
+      };
+      return Text(typeLabel, style: const TextStyle(color: Colors.white));
     }
     if (store.illusts!.metaPages.isNotEmpty) {
       return Text(
@@ -211,9 +218,19 @@ class _IllustCardState extends State<IllustCard> {
         ? 1.0
         : store.illusts!.width.toDouble() / store.illusts!.height.toDouble();
     return Card(
-      margin: EdgeInsets.all(8.0),
+      margin: const EdgeInsets.all(6),
+      elevation: 0,
       clipBehavior: Clip.antiAlias,
-      color: Theme.of(context).colorScheme.surface,
+      color: Theme.of(context).colorScheme.surfaceContainerLow,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(
+          color: Theme.of(context)
+              .colorScheme
+              .outlineVariant
+              .withValues(alpha: 0.55),
+        ),
+      ),
       child: _buildAnimationWraper(
         context,
         Column(
@@ -235,6 +252,12 @@ class _IllustCardState extends State<IllustCard> {
                       ],
                     ),
                   ),
+                  if (widget.showStats)
+                    Positioned(
+                      left: 8,
+                      bottom: 8,
+                      child: _buildStatsBadge(context),
+                    ),
                   // Positioned(
                   //   top: 0,
                   //   left: 0,
@@ -282,14 +305,60 @@ class _IllustCardState extends State<IllustCard> {
   Widget _buildAIBadge() {
     return Container(
       decoration: BoxDecoration(
-        color: Colors.black26,
-        borderRadius: BorderRadius.all(Radius.circular(4.0)),
+        color: Colors.black.withValues(alpha: 0.72),
+        borderRadius: const BorderRadius.all(Radius.circular(8)),
       ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 2.0, horizontal: 2.0),
+      child: const Padding(
+        padding: EdgeInsets.symmetric(vertical: 3, horizontal: 6),
         child: Text("AI", style: TextStyle(color: Colors.white)),
       ),
     );
+  }
+
+  Widget _buildStatsBadge(BuildContext context) {
+    final illust = store.illusts!;
+    final bookmarks = _compactCount(illust.totalBookmarks);
+    final views = _compactCount(illust.totalView);
+    return Semantics(
+      label:
+          '${I18n.of(context).total_bookmark}: ${illust.totalBookmarks}, '
+          '${I18n.of(context).total_view}: ${illust.totalView}',
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.72),
+          borderRadius: BorderRadius.circular(9),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.favorite, size: 13, color: Colors.white),
+            const SizedBox(width: 3),
+            Text(
+              bookmarks,
+              style: const TextStyle(color: Colors.white, fontSize: 11),
+            ),
+            const SizedBox(width: 7),
+            const Icon(Icons.visibility, size: 13, color: Colors.white),
+            const SizedBox(width: 3),
+            Text(
+              views,
+              style: const TextStyle(color: Colors.white, fontSize: 11),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _compactCount(int value) {
+    if (value >= 1000000) {
+      return '${(value / 1000000).toStringAsFixed(value >= 10000000 ? 0 : 1)}M';
+    }
+    if (value >= 1000) {
+      return '${(value / 1000).toStringAsFixed(value >= 10000 ? 0 : 1)}K';
+    }
+    return '$value';
   }
 
   Widget _buildAnimationWraper(BuildContext context, Widget child) {
@@ -371,14 +440,14 @@ class _IllustCardState extends State<IllustCard> {
                 Text(
                   store.illusts!.title,
                   maxLines: 1,
-                  overflow: TextOverflow.clip,
+                  overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.bodyMedium,
                   strutStyle: StrutStyle(forceStrutHeight: true, leading: 0),
                 ),
                 Text(
                   store.illusts!.user.name,
                   maxLines: 1,
-                  overflow: TextOverflow.clip,
+                  overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.bodySmall,
                   strutStyle: StrutStyle(forceStrutHeight: true, leading: 0),
                 ),
@@ -464,18 +533,18 @@ class _IllustCardState extends State<IllustCard> {
       child: Align(
         alignment: Alignment.topRight,
         child: Padding(
-          padding: EdgeInsets.all(4.0),
+          padding: const EdgeInsets.all(4),
           child: Container(
             child: Padding(
               padding: const EdgeInsets.symmetric(
-                vertical: 2.0,
-                horizontal: 2.0,
+                vertical: 3,
+                horizontal: 6,
               ),
               child: cardText(),
             ),
             decoration: BoxDecoration(
-              color: Colors.black26,
-              borderRadius: BorderRadius.all(Radius.circular(4.0)),
+              color: Colors.black.withValues(alpha: 0.72),
+              borderRadius: const BorderRadius.all(Radius.circular(8)),
             ),
           ),
         ),

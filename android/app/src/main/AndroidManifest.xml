@@ -29,7 +29,7 @@
         android:name=".PixEz"
         android:enableOnBackInvokedCallback="true"
         android:icon="@mipmap/ic_launcher"
-        android:label="PixEz"
+        android:label="PixEz Archive"
         android:extractNativeLibs="true"
         android:requestLegacyExternalStorage="true">
         <receiver

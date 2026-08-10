@@ -57,9 +57,9 @@ if (keystorePropertiesFile.exists()) {
 val isGooglePlay = dartEnvironmentVariables["IS_GOOGLEPLAY"] as Boolean
 
 val packageName = if (isGooglePlay) {
-    "com.perol.play.pixez"
+    "com.miyasanjisaki.pixezarchive.play"
 } else {
-    "com.perol.pixez"
+    "com.miyasanjisaki.pixezarchive"
 }
 
 android {

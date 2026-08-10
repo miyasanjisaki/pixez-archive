@@ -186,25 +186,28 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             return MaterialApp(
               navigatorObservers: [BotToastNavigatorObserver(), routeObserver],
               locale: userSetting.locale,
-              home: Builder(
-                builder: (context) {
-                  return AnnotatedRegion<SystemUiOverlayStyle>(
-                    value: SystemUiOverlayStyle(
-                      systemNavigationBarColor: Colors.transparent,
-                      systemNavigationBarDividerColor: Colors.transparent,
-                      systemNavigationBarContrastEnforced: false,
-                      statusBarColor: Colors.transparent,
-                    ),
-                    child: SplashPage(),
-                  );
-                },
-              ),
+              home: SplashPage(),
               title: 'PixEz',
               builder: (context, child) {
                 if (Platform.isIOS) child = _buildMaskBuilder(context, child);
                 child = botToastBuilder(context, child);
                 I18n.context = context;
-                return child;
+                final brightness = Theme.of(context).brightness;
+                final iconBrightness = brightness == Brightness.dark
+                    ? Brightness.light
+                    : Brightness.dark;
+                return AnnotatedRegion<SystemUiOverlayStyle>(
+                  value: SystemUiOverlayStyle(
+                    statusBarColor: Colors.transparent,
+                    statusBarBrightness: brightness,
+                    statusBarIconBrightness: iconBrightness,
+                    systemNavigationBarColor: Colors.transparent,
+                    systemNavigationBarDividerColor: Colors.transparent,
+                    systemNavigationBarIconBrightness: iconBrightness,
+                    systemNavigationBarContrastEnforced: false,
+                  ),
+                  child: child ?? const SizedBox.shrink(),
+                );
               },
               themeMode: userSetting.themeMode,
               theme: ThemeData(
