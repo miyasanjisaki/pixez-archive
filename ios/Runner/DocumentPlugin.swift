@@ -21,8 +21,11 @@ struct DocumentPlugin {
                 let data  = args?["data"] as! FlutterStandardTypedData
                 let name = args?["name"] as! String
                 let sData = Data(data.data)
-                save(sData, name: name, in: name.contains("sanity") ? "pxez_sanity" : "pxez")
-                result(true)
+                save(sData, name: name, in: name.contains("sanity") ? "pxez_sanity" : "pxez") { success in
+                    DispatchQueue.main.async {
+                        result(success)
+                    }
+                }
                 return
             } else if call.method == "permissionStatus" {
                 if #available(iOS 14, *) {
@@ -48,24 +51,31 @@ struct DocumentPlugin {
     
     static var picCacheDir: URL = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("Pic", isDirectory: true)
     
-    static func save(_ data: Data,name : String, in dir: String) {
+    static func save(_ data: Data, name: String, in dir: String, completion: @escaping (Bool) -> Void) {
+        let saveToAlbum = {
+            self.createAlbum(albumName: dir) { assetCollection in
+                guard let assetCollection = assetCollection else {
+                    completion(false)
+                    return
+                }
+                self.save(data: data, name: name, assetCollection: assetCollection, completion: completion)
+            }
+        }
+
         if PHPhotoLibrary.authorizationStatus() != PHAuthorizationStatus.authorized {
             PHPhotoLibrary.requestAuthorization({ (status) -> Void in
                 if PHPhotoLibrary.authorizationStatus() != PHAuthorizationStatus.authorized {
+                    completion(false)
                     return
                 }
-                createAlbum(albumName: dir, completion: { assetCollection in
-                    self.save(data: data, name: name, assetCollection: assetCollection)
-                })
+                saveToAlbum()
             })
         } else {
-            createAlbum(albumName: dir, completion: { assetCollection in
-                self.save(data: data, name: name, assetCollection: assetCollection)
-            })
+            saveToAlbum()
         }
     }
     
-    static func createAlbum(albumName: String, completion: @escaping (PHAssetCollection) -> Void) {
+    static func createAlbum(albumName: String, completion: @escaping (PHAssetCollection?) -> Void) {
         if let assetCollection = self.findAlbum(name: albumName) {
             completion(assetCollection)
             return
@@ -76,7 +86,7 @@ struct DocumentPlugin {
             if success, let assetCollection = self.findAlbum(name: albumName) {
                 completion(assetCollection)
             } else {
-                
+                completion(nil)
             }
         }
     }
@@ -89,17 +99,22 @@ struct DocumentPlugin {
         return collection.firstObject
     }
     
-    static func save(data:Data,name:String, assetCollection: PHAssetCollection){
+    static func save(data: Data, name: String, assetCollection: PHAssetCollection, completion: @escaping (Bool) -> Void) {
         if !FileManager.default.fileExists(atPath: picCacheDir.path) {
             do{
                 try FileManager.default.createDirectory(at: picCacheDir, withIntermediateDirectories: true)
             } catch {
                 print("create dir failed => \(picCacheDir.path)")
+                completion(false)
                 return
             }
         }
         
-        guard let fileName = name.split(separator: " ").last else { return }
+        let fileName = (name as NSString).lastPathComponent
+        guard !fileName.isEmpty else {
+            completion(false)
+            return
+        }
         print("fileName = \(fileName)")
         
         let fileUrl = picCacheDir.appendingPathComponent("\(fileName)")
@@ -108,6 +123,7 @@ struct DocumentPlugin {
             try data.write(to: fileUrl)
             
         } catch {
+            completion(false)
             return
         }
         
@@ -125,6 +141,7 @@ struct DocumentPlugin {
                 try FileManager.default.removeItem(at: fileUrl)
             } catch {
             }
+            completion(success && error == nil)
         })
     }
 }

@@ -24,14 +24,15 @@ import 'package:flutter/material.dart';
 import 'package:mobx/mobx.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:pixez/document_plugin.dart';
+import 'package:pixez/er/lprinter.dart';
 import 'package:pixez/er/toaster.dart';
-import 'package:pixez/exts.dart';
 import 'package:pixez/i18n.dart';
 import 'package:pixez/js_eval_plugin.dart';
 import 'package:pixez/main.dart';
 import 'package:pixez/models/illust.dart';
 import 'package:pixez/models/task_persist.dart';
 import 'package:pixez/page/task/job_page.dart';
+import 'package:pixez/utils/file_name_sanitizer.dart';
 import 'package:pixez/utils/haptic_util.dart';
 
 part 'save_store.g.dart';
@@ -87,7 +88,14 @@ Future<String> buildSaveFileName(
         index,
         memType,
       );
-      if (result != null && result.isNotEmpty) return result;
+      if (result != null && result.isNotEmpty) {
+        return sanitizeFileNameComponent(
+          result,
+          fallback: withExtension
+              ? '${illust.id}_p$index$memType'
+              : '${illust.id}_p$index',
+        );
+      }
     } else {
       await userSetting.setFileNameEval(0);
     }
@@ -99,15 +107,22 @@ Future<String> buildSaveFileName(
       .replaceAll("{user_name}", illust.user.name.toString())
       .replaceAll("{title}", illust.title);
   if (withExtension) {
-    return "$result$memType".toLegal();
+    return sanitizeFileNameComponent(
+      '$result$memType',
+      fallback: '${illust.id}_p$index$memType',
+    );
   }
-  return result.toLegal();
+  return sanitizeFileNameComponent(result, fallback: '${illust.id}_p$index');
 }
 
 /// 如果用户启用了 [singleFolder]，将 [baseName] 包装到作者子目录中。
 String applySingleFolder(Illusts illust, String baseName) {
   if (userSetting.singleFolder) {
-    return "${illust.user.name.toLegal()}_${illust.user.id}/$baseName";
+    final userName = sanitizeFileNameComponent(
+      illust.user.name,
+      fallback: 'user_${illust.user.id}',
+    );
+    return '${userName}_${illust.user.id}/$baseName';
   }
   return baseName;
 }
@@ -269,7 +284,11 @@ abstract class _SaveStoreBase with Store {
     return directory;
   }
 
-  _joinQueue(String url, Illusts illusts, String fileName) async {
+  Future<void> _joinQueue(
+    String url,
+    Illusts illusts,
+    String fileName,
+  ) async {
     final result = await fetcher.taskPersistProvider.getAccount(url);
     if (result != null) {
       streamController.add(
@@ -294,11 +313,15 @@ abstract class _SaveStoreBase with Store {
     );
     try {
       await fetcher.taskPersistProvider.insert(taskPersist);
-      fetcher.save(url, illusts, fileName);
-    } catch (e) {}
+      await fetcher.save(url, illusts, fileName);
+    } catch (error, stackTrace) {
+      LPrinter.d('Unable to enqueue download: $error');
+      LPrinter.d(stackTrace);
+      Error.throwWithStackTrace(error, stackTrace);
+    }
   }
 
-  _saveInternal(
+  Future<void> _saveInternal(
     String url,
     Illusts illusts,
     String fileName,
@@ -315,45 +338,46 @@ abstract class _SaveStoreBase with Store {
           );
           return;
         }
-      } catch (e) {}
+      } catch (error, stackTrace) {
+        LPrinter.d('Unable to check download destination: $error');
+        LPrinter.d(stackTrace);
+      }
     }
     streamController.add(SaveStream(SaveState.JOIN, illusts, index: index));
-    _joinQueue(url, illusts, fileName);
+    await _joinQueue(url, illusts, fileName);
   }
 
-  Future<void> saveToGalleryWithUser(
+  Future<bool> saveToGalleryWithUser(
     Uint8List uint8list,
     String userName,
     int userId,
     int sanityLevel,
     String fileName,
   ) async {
-    if (Platform.isAndroid || Platform.isIOS || Platform.isWindows) {
-      try {
-        String overFileName = fileName;
+    try {
+      if (Platform.isAndroid || Platform.isIOS || Platform.isWindows) {
+        final overFileName = fileName;
         if (userSetting.singleFolder) {
-          String name = userName.toLegal();
-          String id = userId.toString();
-          fileName = "${name}_$id/$overFileName";
+          final name = sanitizeFileNameComponent(
+            userName,
+            fallback: 'user_$userId',
+          );
+          fileName = '${name}_$userId/$overFileName';
         }
         if (userSetting.overSanityLevelFolder && sanityLevel > 2) {
-          fileName = "sanity/$overFileName";
+          fileName = 'sanity/$overFileName';
         }
-
-        if (userSetting.isClearOldFormatFile)
-          DocumentPlugin.save(
-            uint8list,
-            fileName,
-            clearOld: userSetting.isClearOldFormatFile,
-          );
-        else
-          DocumentPlugin.save(uint8list, fileName);
-      } catch (e) {
-        print(e);
       }
-      return;
-    } else {
-      DocumentPlugin.save(uint8list, fileName);
+
+      final saved = await DocumentPlugin.save(
+        uint8list,
+        fileName,
+        clearOld: userSetting.isClearOldFormatFile,
+      );
+      return saved ?? false;
+    } catch (e) {
+      print(e);
+      return false;
     }
   }
 
@@ -366,12 +390,12 @@ abstract class _SaveStoreBase with Store {
     uint8list.addAll(randomList);
   }
 
-  Future<void> saveToGallery(
+  Future<bool> saveToGallery(
     Uint8List uint8list,
     Illusts illusts,
     String fileName,
   ) async {
-    saveToGalleryWithUser(
+    return saveToGalleryWithUser(
       uint8list,
       illusts.user.name,
       illusts.user.id,
@@ -427,7 +451,6 @@ abstract class _SaveStoreBase with Store {
     return result ?? "";
   }
 
-
   Future<String> _handleFileName(
     Illusts illust,
     int index,
@@ -452,22 +475,22 @@ abstract class _SaveStoreBase with Store {
     String memType;
     if (illusts.pageCount == 1) {
       String url = illusts.metaSinglePage!.originalImageUrl!;
-      memType = url.contains('.png') ? '.png' : '.jpg';
+      memType = inferImageFileExtension(url);
       String fileName = await _handleFileName(illusts, 0, memType);
-      _saveInternal(url, illusts, fileName, 0, redo: redo);
+      await _saveInternal(url, illusts, fileName, 0, redo: redo);
     } else {
       if (index != null) {
         var url = illusts.metaPages[index].imageUrls!.original;
-        memType = url.contains('.png') ? '.png' : '.jpg';
+        memType = inferImageFileExtension(url);
         String fileName = await _handleFileName(illusts, index, memType);
-        _saveInternal(url, illusts, fileName, index, redo: redo);
+        await _saveInternal(url, illusts, fileName, index, redo: redo);
       } else {
         int index = 0;
         for (var f in illusts.metaPages) {
           String url = f.imageUrls!.original;
-          memType = url.contains('.png') ? '.png' : '.jpg';
+          memType = inferImageFileExtension(url);
           String fileName = await _handleFileName(illusts, index, memType);
-          _saveInternal(url, illusts, fileName, index, redo: redo);
+          await _saveInternal(url, illusts, fileName, index, redo: redo);
           index++;
         }
       }

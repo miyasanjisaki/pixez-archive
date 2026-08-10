@@ -131,8 +131,10 @@ class MainActivity : FlutterActivity() {
                     saveMode = call.argument<Int>("save_mode") ?: 0
                     if (clearOld == null)
                         clearOld = false
-                    if (savingPools.contains(name))
-                        return@setMethodCallHandler;
+                    if (savingPools.contains(name)) {
+                        result.error("SAVE_IN_PROGRESS", "A save with the same name is already running", null)
+                        return@setMethodCallHandler
+                    }
                     savingPools.add(name)
                     lifecycleScope.launch {
                         try {
@@ -228,8 +230,10 @@ class MainActivity : FlutterActivity() {
                     saveMode = call.argument<Int>("save_mode") ?: 0
                     if (clearOld == null)
                         clearOld = false
-                    if (savingPools.contains(name))
-                        return@setMethodCallHandler;
+                    if (savingPools.contains(name)) {
+                        result.error("SAVE_IN_PROGRESS", "A save with the same name is already running", null)
+                        return@setMethodCallHandler
+                    }
                     savingPools.add(name)
                     lifecycleScope.launch {
                         try {

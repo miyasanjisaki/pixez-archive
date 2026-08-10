@@ -36,6 +36,7 @@ import 'package:pixez/models/task_persist.dart';
 import 'package:pixez/network/network_mode.dart';
 import 'package:pixez/network/pixez_network_settings.dart';
 import 'package:pixez/store/save_store.dart';
+import 'package:pixez/utils/file_name_sanitizer.dart';
 import 'package:quiver/collection.dart';
 import 'package:rhttp/rhttp.dart' as r;
 
@@ -96,14 +97,23 @@ class Fetcher {
   start(String pictureSource) async {
     if (receivePort.isBroadcast) return;
     await taskPersistProvider.open();
-    await taskPersistProvider.getAllAccount();
+    final resumableTasks = (await taskPersistProvider.getAllAccount())
+        .where((task) => task.status == 0 || task.status == 1)
+        .toList(growable: false);
     LPrinter.d("Fetcher start");
-    receivePort.listen((message) {
+    receivePort.listen((message) async {
       try {
         IsoContactBean isoContactBean = message;
         switch (isoContactBean.state) {
           case IsoTaskState.INIT:
             sendPortToChild = isoContactBean.data;
+            for (final task in resumableTasks) {
+              if (task.status != 0) {
+                await taskPersistProvider.update(task..status = 0);
+              }
+              await save(task.url, task.toIllusts(), task.fileName);
+            }
+            await nextJob();
             break;
           case IsoTaskState.PROGRESS:
             IsoProgressBean isoProgressBean = isoContactBean.data;
@@ -128,8 +138,8 @@ class Fetcher {
               LPrinter.d("c ${queue.length}");
             }
             fetcher.jobMaps.removeWhere((key, value) => key == taskBean.url);
-            nextJob();
-            _complete(
+            await nextJob();
+            await _complete(
               taskBean.url!,
               taskBean.savePath!,
               taskBean.fileName!,
@@ -144,13 +154,16 @@ class Fetcher {
               LPrinter.d("c ${queue.length}");
             }
             fetcher.jobMaps.removeWhere((key, value) => key == taskBean.url);
-            nextJob();
-            _errorD(taskBean.url!);
+            await nextJob();
+            await _errorD(taskBean.url!);
             break;
           default:
             break;
         }
-      } catch (e) {}
+      } catch (error, stackTrace) {
+        LPrinter.d('Download queue event failed: $error');
+        LPrinter.d(stackTrace);
+      }
     });
     isolate = await Isolate.spawn(
       entryPoint,
@@ -166,23 +179,31 @@ class Fetcher {
 
   save(String url, Illusts illusts, String fileName) async {
     LPrinter.d(sendPortToChild.toString() + url);
+    final safeFileName = sanitizeRelativeFilePath(
+      fileName,
+      fallback: '${illusts.id}.jpg',
+    );
     var taskBean = TaskBean(
       url: url,
       illusts: illusts,
-      fileName: fileName,
+      fileName: safeFileName,
       networkMode: userSetting.networkMode,
       source: userSetting.pictureSource,
       host: splashStore.host,
       savePath: (await getTemporaryDirectory()).path,
     );
     queue.add(taskBean);
-    nextJob();
+    await nextJob();
   }
 
   List<String> urlPool = [];
 
-  nextJob() {
-    if (queue.isNotEmpty && urlPool.length < userSetting.maxRunningTask) {
+  Future<void> nextJob() async {
+    final targetPort = sendPortToChild;
+    if (targetPort == null) return;
+
+    while (queue.isNotEmpty &&
+        urlPool.length < userSetting.maxRunningTask) {
       TaskBean? first = null;
       for (var i in queue) {
         if (!urlPool.contains(i.url)) {
@@ -198,8 +219,17 @@ class Fetcher {
         state: IsoTaskState.APPEND,
         data: first,
       );
-      sendPortToChild?.send(isoContactBean);
+      targetPort.send(isoContactBean);
       if (first.url != null) urlPool.add(first.url!);
+      try {
+        final persisted = await taskPersistProvider.getAccount(first.url!);
+        if (persisted != null && persisted.status != 1) {
+          await taskPersistProvider.update(persisted..status = 1);
+        }
+      } catch (error, stackTrace) {
+        LPrinter.d('Unable to persist download start: $error');
+        LPrinter.d(stackTrace);
+      }
     }
   }
 
@@ -225,21 +255,44 @@ class Fetcher {
     String fileName,
     Illusts illusts,
   ) async {
-    var taskPersist = await taskPersistProvider.getAccount(url);
-    if (taskPersist == null) return;
-    await taskPersistProvider.update(taskPersist..status = 2);
-    File file = File(savePath + Platform.pathSeparator + fileName);
-    final uint8list = await file.readAsBytes();
-    await saveStore.saveToGallery(uint8list, illusts, fileName);
-    Toaster.downloadOk("${illusts.title} ${I18n.of(context!).saved}");
-    var job = jobMaps[url];
-    if (job != null) {
-      job.status = 2;
-    } else {
-      jobMaps[url] = JobEntity()
-        ..status = 2
-        ..min = 1
-        ..max = 1;
+    try {
+      var taskPersist = await taskPersistProvider.getAccount(url);
+      if (taskPersist == null) return;
+      File file = File(savePath + Platform.pathSeparator + fileName);
+      if (!await file.exists()) {
+        await _errorD(url);
+        return;
+      }
+
+      final uint8list = await file.readAsBytes();
+      final saved = await saveStore.saveToGallery(uint8list, illusts, fileName);
+      if (!saved) {
+        await _errorD(url);
+        return;
+      }
+
+      await taskPersistProvider.update(taskPersist..status = 2);
+      try {
+        await file.delete();
+      } on FileSystemException catch (error) {
+        LPrinter.d(error);
+      }
+      if (context != null) {
+        Toaster.downloadOk("${illusts.title} ${I18n.of(context!).saved}");
+      }
+      var job = jobMaps[url];
+      if (job != null) {
+        job.status = 2;
+      } else {
+        jobMaps[url] = JobEntity()
+          ..status = 2
+          ..min = 1
+          ..max = 1;
+      }
+    } catch (error, stackTrace) {
+      LPrinter.d('Downloaded file could not be persisted: $error');
+      LPrinter.d(stackTrace);
+      await _errorD(url);
     }
   }
 
@@ -329,10 +382,28 @@ entryPoint(SendMessage message) async {
             currentPictureSource = taskBean.source ?? pictureSource;
             currentNetworkMode = taskBean.networkMode ?? message.networkMode;
             print("========taskBean.savePath: ${taskBean.savePath}");
-            var savePath =
-                taskBean.savePath! +
-                Platform.pathSeparator +
-                taskBean.fileName!;
+            final safeFileName = sanitizeRelativeFilePath(
+              taskBean.fileName!,
+              fallback: '${taskBean.illusts?.id ?? 'download'}.jpg',
+            );
+            taskBean.fileName = safeFileName;
+            final temporaryDirectory = Directory(taskBean.savePath!).absolute;
+            final targetFile = File(
+              '${temporaryDirectory.path}${Platform.pathSeparator}$safeFileName',
+            ).absolute;
+            final rootPrefix =
+                '${temporaryDirectory.path}${Platform.pathSeparator}';
+            final comparableRoot =
+                Platform.isWindows ? rootPrefix.toLowerCase() : rootPrefix;
+            final comparableTarget = Platform.isWindows
+                ? targetFile.path.toLowerCase()
+                : targetFile.path;
+            if (!comparableTarget.startsWith(comparableRoot)) {
+              throw FileSystemException(
+                'Download path escaped the temporary directory',
+                targetFile.path,
+              );
+            }
             await for (final response in pixivCacheManager!.getFileStream(
               taskBean.url!,
               headers: {
@@ -353,7 +424,7 @@ entryPoint(SendMessage message) async {
                   ),
                 );
               } else if (response is FileInfo) {
-                File file = File(savePath);
+                File file = targetFile;
                 if (!file.parent.existsSync()) {
                   file.parent.createSync(recursive: true);
                 }

@@ -39,6 +39,7 @@ import 'package:pixez/utils/haptic_util.dart';
 class IllustCard extends StatefulWidget {
   final IllustStore store;
   final List<IllustStore>? iStores;
+  final List<IllustStore> Function()? iStoresProvider;
   final bool needToBan;
   final LightingStore lightingStore;
 
@@ -46,6 +47,7 @@ class IllustCard extends StatefulWidget {
     required this.store,
     required this.lightingStore,
     this.iStores,
+    this.iStoresProvider,
     this.needToBan = false,
   });
 
@@ -56,6 +58,7 @@ class IllustCard extends StatefulWidget {
 class _IllustCardState extends State<IllustCard> {
   late IllustStore store;
   late List<IllustStore>? iStores;
+  late List<IllustStore> Function()? iStoresProvider;
   late String tag;
   late LightingStore _lightingStore;
 
@@ -63,6 +66,7 @@ class _IllustCardState extends State<IllustCard> {
   void initState() {
     store = widget.store;
     iStores = widget.iStores;
+    iStoresProvider = widget.iStoresProvider;
     _lightingStore = widget.lightingStore;
     tag = this.hashCode.toString();
     super.initState();
@@ -73,6 +77,7 @@ class _IllustCardState extends State<IllustCard> {
     super.didUpdateWidget(oldWidget);
     store = widget.store;
     iStores = widget.iStores;
+    iStoresProvider = widget.iStoresProvider;
     _lightingStore = widget.lightingStore;
   }
 
@@ -148,6 +153,7 @@ class _IllustCardState extends State<IllustCard> {
             iStores: iStores!,
             store: store,
             lightingStore: _lightingStore,
+            iStoresProvider: iStoresProvider,
             heroString: tag,
           );
         },
@@ -335,6 +341,7 @@ class _IllustCardState extends State<IllustCard> {
               store: store,
               lightingStore: _lightingStore,
               iStores: iStores!,
+              iStoresProvider: iStoresProvider,
             );
           }
           return IllustLightingPage(

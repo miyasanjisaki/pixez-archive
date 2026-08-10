@@ -65,6 +65,7 @@ class TaskPersist {
     data[columnUserId] = this.userId;
     data[columnStatus] = this.status;
     data[columnFileName] = this.fileName;
+    data[columnMedium] = this.medium;
     return data;
   }
 
@@ -121,6 +122,7 @@ final String columnStatus = 'status';
 final String columnFileName = 'file_name';
 final String columnMedium = 'medium';
 final String columnSanityLevel = 'sanity_level';
+final String indexTaskUrl = 'task_url_unique';
 
 class TaskPersistProvider {
   late Database db;
@@ -129,7 +131,7 @@ class TaskPersistProvider {
     String databasesPath = (await getDatabasesPath());
     String path =
         join(databasesPath, 'task1.db'); //某个版本出的bug，升级table无法定位问题，只能改了
-    db = await openDatabase(path, version: 2,
+    db = await openDatabase(path, version: 3,
         onCreate: (Database db, int version) async {
       await db.execute('''
 create table $tableAccount ( 
@@ -145,12 +147,28 @@ create table $tableAccount (
   $columnMedium text
   )
 ''');
+      await db.execute(
+        'CREATE UNIQUE INDEX $indexTaskUrl ON $tableAccount ($columnUrl)',
+      );
     }, onUpgrade: (Database db, int oldVersion, int newVersion) async {
-      if (oldVersion == 1 && newVersion == 2) {
+      if (oldVersion < 2) {
         await db.execute('''
         ALTER TABLE $tableAccount
   ADD $columnMedium text;
         ''');
+      }
+      if (oldVersion < 3) {
+        // Older versions could enqueue the same URL more than once. Keep the
+        // newest row before enforcing queue identity at the database layer.
+        await db.execute('''
+DELETE FROM $tableAccount
+WHERE $columnId NOT IN (
+  SELECT MAX($columnId) FROM $tableAccount GROUP BY $columnUrl
+)
+''');
+        await db.execute(
+          'CREATE UNIQUE INDEX $indexTaskUrl ON $tableAccount ($columnUrl)',
+        );
       }
     });
   }

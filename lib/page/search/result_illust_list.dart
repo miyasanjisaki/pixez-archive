@@ -23,9 +23,11 @@ import 'package:pixez/i18n.dart';
 import 'package:pixez/lighting/lighting_page.dart';
 import 'package:pixez/lighting/lighting_store.dart';
 import 'package:pixez/main.dart';
+import 'package:pixez/models/illust.dart';
 import 'package:pixez/network/api_client.dart';
 import 'package:pixez/page/search/result_illust_store.dart';
 import 'package:pixez/page/search/suggest/search_suggestion_page.dart';
+import 'package:pixez/utils/illust_result_options.dart';
 
 enum UgoiraFilter {
   all,
@@ -63,6 +65,8 @@ class _ResultIllustListState extends State<ResultIllustList> {
   String selectSort = "date_desc";
   int searchAIType = 0;
   UgoiraFilter ugoiraFilter = UgoiraFilter.all;
+  IllustResultSort loadedResultSort = IllustResultSort.apiOrder;
+  IllustContentFilter contentFilter = IllustContentFilter.all;
   int selectStarNum = 0;
   List<int> starNum = [
     0,
@@ -97,11 +101,11 @@ class _ResultIllustListState extends State<ResultIllustList> {
 
   @override
   void initState() {
+    super.initState();
     _scrollController = ScrollController();
     checkInit();
-    super.initState();
     listen = topStore.topStream.listen((event) {
-      if (event == "401") {
+      if (event == "401" && _scrollController.hasClients) {
         _scrollController.position.jumpTo(0);
       }
     });
@@ -113,22 +117,34 @@ class _ResultIllustListState extends State<ResultIllustList> {
     final searchTargetKey = '${prefix}_search_target';
     final searchSortKey = '${prefix}_search_sort';
     final ugoiraFilterKey = '${prefix}_ugoira_filter';
+    final loadedResultSortKey = '${prefix}_loaded_result_sort';
+    final contentFilterKey = '${prefix}_content_filter';
     final recordRememberCurrentSelectionKey =
         'illust_search_result_record_remember_current_selection';
     recordRememberCurrentSelection =
         Prefer.getBool(recordRememberCurrentSelectionKey) ?? false;
-    if (recordRememberCurrentSelection) {
-      if (mounted) {
-        setState(() {
-          searchTarget = Prefer.getString(searchTargetKey) ?? search_target[0];
-          selectSort = Prefer.getString(searchSortKey) ?? "date_desc";
-          searchAIType = Prefer.getInt(searchAIKey) ?? 0;
-          ugoiraFilter = UgoiraFilter
-              .values[Prefer.getInt(ugoiraFilterKey) ?? UgoiraFilter.all.index];
-        });
-      }
-    }
+    if (!mounted) return;
     setState(() {
+      if (recordRememberCurrentSelection) {
+        searchTarget = Prefer.getString(searchTargetKey) ?? search_target[0];
+        selectSort = Prefer.getString(searchSortKey) ?? "date_desc";
+        searchAIType = Prefer.getInt(searchAIKey) ?? 0;
+        ugoiraFilter = _enumValueOr(
+          UgoiraFilter.values,
+          Prefer.getInt(ugoiraFilterKey),
+          UgoiraFilter.all,
+        );
+        loadedResultSort = _enumValueOr(
+          IllustResultSort.values,
+          Prefer.getInt(loadedResultSortKey),
+          IllustResultSort.apiOrder,
+        );
+        contentFilter = _enumValueOr(
+          IllustContentFilter.values,
+          Prefer.getInt(contentFilterKey),
+          IllustContentFilter.all,
+        );
+      }
       _changeQueryParams();
       inited = true;
     });
@@ -140,15 +156,25 @@ class _ResultIllustListState extends State<ResultIllustList> {
     final searchTargetKey = '${prefix}_search_target';
     final searchSortKey = '${prefix}_search_sort';
     final ugoiraFilterKey = '${prefix}_ugoira_filter';
+    final loadedResultSortKey = '${prefix}_loaded_result_sort';
+    final contentFilterKey = '${prefix}_content_filter';
     await Prefer.setString(searchTargetKey, searchTarget);
     await Prefer.setString(searchSortKey, selectSort);
     await Prefer.setInt(searchAIKey, searchAIType);
     await Prefer.setInt(ugoiraFilterKey, ugoiraFilter.index);
+    await Prefer.setInt(loadedResultSortKey, loadedResultSort.index);
+    await Prefer.setInt(contentFilterKey, contentFilter.index);
+  }
+
+  T _enumValueOr<T>(List<T> values, int? index, T fallback) {
+    if (index == null || index < 0 || index >= values.length) return fallback;
+    return values[index];
   }
 
   @override
   void dispose() {
     listen.cancel();
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -223,17 +249,28 @@ class _ResultIllustListState extends State<ResultIllustList> {
                   : LightingList(
                       source: futureGet,
                       scrollController: _scrollController,
-                      filter: (illust) {
-                        return switch (ugoiraFilter) {
-                          UgoiraFilter.all => true,
-                          UgoiraFilter.onlyUgoira => illust.type == 'ugoira',
-                          UgoiraFilter.noUgoira => illust.type != 'ugoira',
-                        };
-                      },
+                      filter: _hasContentFilter ? _matchesContentFilter : null,
+                      comparator: buildIllustResultComparator<Illusts>(
+                        loadedResultSort,
+                        bookmarksOf: (illust) => illust.totalBookmarks,
+                        viewsOf: (illust) => illust.totalView,
+                      ),
                     ))
         ],
       ),
     );
+  }
+
+  bool get _hasContentFilter => contentFilter != IllustContentFilter.all ||
+      ugoiraFilter != UgoiraFilter.all;
+
+  bool _matchesContentFilter(Illusts illust) {
+    final matchesUgoira = switch (ugoiraFilter) {
+      UgoiraFilter.all => true,
+      UgoiraFilter.onlyUgoira => illust.type == 'ugoira',
+      UgoiraFilter.noUgoira => illust.type != 'ugoira',
+    };
+    return matchesUgoira && matchesIllustContent(illust.type, contentFilter);
   }
 
   DateTimeRange? _dateTimeRange;
@@ -275,11 +312,16 @@ class _ResultIllustListState extends State<ResultIllustList> {
   }
 
   void _buildShowBottomSheet(BuildContext context) {
+    final initialSearchAIType = searchAIType;
+    final initialSearchTarget = searchTarget;
+    final initialSelectSort = selectSort;
     var resultIllustSortWidget = ResultIllustSortWidget(
         searchAIType: searchAIType,
         selectSort: selectSort,
         searchTarget: searchTarget,
         ugoiraFilter: ugoiraFilter,
+        loadedResultSort: loadedResultSort,
+        contentFilter: contentFilter,
         onPremium: () {
           setState(() {
             futureGet = ApiForceSource(
@@ -288,12 +330,19 @@ class _ResultIllustListState extends State<ResultIllustList> {
           });
         },
         onApply: () {
-          setState(() {
-            _changeQueryParams();
-          });
+          final serverQueryChanged = initialSearchAIType != searchAIType ||
+              initialSearchTarget != searchTarget ||
+              initialSelectSort != selectSort;
+          if (serverQueryChanged) {
+            setState(() {
+              _changeQueryParams();
+            });
+          }
         },
         onSateChange: (
             {required bool recordRememberCurrentSelection,
+            required IllustContentFilter contentFilter,
+            required IllustResultSort loadedResultSort,
             required int searchAIType,
             required String searchTarget,
             required String selectSort,
@@ -303,6 +352,8 @@ class _ResultIllustListState extends State<ResultIllustList> {
             this.searchTarget = searchTarget;
             this.selectSort = selectSort;
             this.ugoiraFilter = ugoiraFilter;
+            this.loadedResultSort = loadedResultSort;
+            this.contentFilter = contentFilter;
             this.recordRememberCurrentSelection =
                 recordRememberCurrentSelection;
           });
@@ -412,6 +463,8 @@ class ResultIllustSortWidget extends StatefulWidget {
   final String selectSort;
   final String searchTarget;
   final UgoiraFilter ugoiraFilter;
+  final IllustResultSort loadedResultSort;
+  final IllustContentFilter contentFilter;
   final Function onPremium;
   final Function onApply;
   final Function(
@@ -419,6 +472,8 @@ class ResultIllustSortWidget extends StatefulWidget {
       required String selectSort,
       required int searchAIType,
       required UgoiraFilter ugoiraFilter,
+      required IllustResultSort loadedResultSort,
+      required IllustContentFilter contentFilter,
       required bool recordRememberCurrentSelection}) onSateChange;
   const ResultIllustSortWidget(
       {super.key,
@@ -426,6 +481,8 @@ class ResultIllustSortWidget extends StatefulWidget {
       required this.selectSort,
       required this.searchTarget,
       required this.ugoiraFilter,
+      required this.loadedResultSort,
+      required this.contentFilter,
       required this.onPremium,
       required this.onApply,
       required this.onSateChange});
@@ -439,6 +496,8 @@ class _ResultIllustSortWidgetState extends State<ResultIllustSortWidget> {
   late String selectSort = widget.selectSort;
   late String searchTarget = widget.searchTarget;
   late UgoiraFilter ugoiraFilter = widget.ugoiraFilter;
+  late IllustResultSort loadedResultSort = widget.loadedResultSort;
+  late IllustContentFilter contentFilter = widget.contentFilter;
   final sort = [
     "date_desc",
     "date_asc",
@@ -483,6 +542,17 @@ class _ResultIllustSortWidgetState extends State<ResultIllustSortWidget> {
         4: I18n.of(context).popular_female_desc,
       }
     };
+    final loadedResultSortMap = {
+      IllustResultSort.apiOrder: I18n.of(context).default_title,
+      IllustResultSort.bookmarksDesc:
+          '${I18n.of(context).total_bookmark} ↓',
+      IllustResultSort.viewsDesc: '${I18n.of(context).total_view} ↓',
+    };
+    final contentFilterMap = {
+      IllustContentFilter.all: I18n.of(context).all,
+      IllustContentFilter.illustration: I18n.of(context).illust,
+      IllustContentFilter.manga: I18n.of(context).manga,
+    };
     final ugoiraFilterMap = {
       UgoiraFilter.all: I18n.of(context).all,
       UgoiraFilter.onlyUgoira: I18n.of(context).ugoira_only,
@@ -506,12 +576,19 @@ class _ResultIllustSortWidgetState extends State<ResultIllustSortWidget> {
                                 color:
                                     Theme.of(context).colorScheme.secondary))),
                     TextButton(
-                        onPressed: () {
+                        onPressed: () async {
+                          await Prefer.setBool(
+                            rememberKey,
+                            recordRememberCurrentSelection,
+                          );
+                          if (!context.mounted) return;
                           widget.onSateChange(
                               searchTarget: searchTarget,
                               selectSort: selectSort,
                               searchAIType: searchAIType,
                               ugoiraFilter: ugoiraFilter,
+                              loadedResultSort: loadedResultSort,
+                              contentFilter: contentFilter,
                               recordRememberCurrentSelection:
                                   recordRememberCurrentSelection);
                           widget.onApply();
@@ -544,39 +621,44 @@ class _ResultIllustSortWidgetState extends State<ResultIllustSortWidget> {
                     ],
                   ),
                 ),
-                Container(
-                  padding: const EdgeInsets.all(8.0),
-                  child: Row(
-                    children: [
-                      for (final entry in ugoiraFilterMap.entries)
-                        Expanded(
-                          child: GestureDetector(
-                            onTap: () {
-                              setState(() {
-                                ugoiraFilter = entry.key;
-                              });
-                            },
-                            child: Container(
-                              margin: EdgeInsets.symmetric(horizontal: 4.0),
-                              padding: EdgeInsets.symmetric(vertical: 8.0),
-                              decoration: ugoiraFilter == entry.key
-                                  ? BoxDecoration(
-                                      color: Theme.of(context)
-                                          .colorScheme
-                                          .secondaryContainer,
-                                      borderRadius: BorderRadius.circular(8.0),
-                                    )
-                                  : null,
-                              child: Text(
-                                entry.value,
-                                textAlign: TextAlign.center,
-                                style: TextStyle(fontSize: 12),
-                              ),
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
+                _buildChoiceRow(
+                  context,
+                  icon: Icons.leaderboard_outlined,
+                  values: loadedResultSortMap,
+                  selected: loadedResultSort,
+                  onSelected: (value) {
+                    setState(() {
+                      loadedResultSort = value;
+                    });
+                  },
+                ),
+                _buildChoiceRow(
+                  context,
+                  icon: Icons.collections_outlined,
+                  values: contentFilterMap,
+                  selected: contentFilter,
+                  onSelected: (value) {
+                    setState(() {
+                      contentFilter = value;
+                      if (value != IllustContentFilter.all) {
+                        ugoiraFilter = UgoiraFilter.all;
+                      }
+                    });
+                  },
+                ),
+                _buildChoiceRow(
+                  context,
+                  icon: Icons.animation,
+                  values: ugoiraFilterMap,
+                  selected: ugoiraFilter,
+                  onSelected: (value) {
+                    setState(() {
+                      ugoiraFilter = value;
+                      if (value != UgoiraFilter.all) {
+                        contentFilter = IllustContentFilter.all;
+                      }
+                    });
+                  },
                 ),
                 SwitchListTile(
                   value: searchAIType != 1,
@@ -589,8 +671,7 @@ class _ResultIllustSortWidgetState extends State<ResultIllustSortWidget> {
                 ),
                 SwitchListTile(
                   value: recordRememberCurrentSelection,
-                  onChanged: (v) async {
-                    await Prefer.setBool(rememberKey, v);
+                  onChanged: (v) {
                     setState(() {
                       recordRememberCurrentSelection = v;
                     });
@@ -603,6 +684,52 @@ class _ResultIllustSortWidgetState extends State<ResultIllustSortWidget> {
               ],
             ),
           )),
+    );
+  }
+
+  Widget _buildChoiceRow<T>(
+    BuildContext context, {
+    required IconData icon,
+    required Map<T, String> values,
+    required T selected,
+    required ValueChanged<T> onSelected,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(8.0),
+      child: Row(
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(right: 4.0),
+            child: Icon(icon, size: 20),
+          ),
+          for (final entry in values.entries)
+            Expanded(
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => onSelected(entry.key),
+                child: Container(
+                  margin: const EdgeInsets.symmetric(horizontal: 4.0),
+                  padding: const EdgeInsets.symmetric(vertical: 8.0),
+                  decoration: selected == entry.key
+                      ? BoxDecoration(
+                          color: Theme.of(context)
+                              .colorScheme
+                              .secondaryContainer,
+                          borderRadius: BorderRadius.circular(8.0),
+                        )
+                      : null,
+                  child: Text(
+                    entry.value,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
     );
   }
 

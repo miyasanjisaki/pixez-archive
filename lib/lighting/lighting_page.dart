@@ -28,6 +28,8 @@ import 'package:pixez/i18n.dart';
 import 'package:pixez/lighting/lighting_store.dart';
 import 'package:pixez/main.dart';
 import 'package:pixez/models/illust.dart';
+import 'package:pixez/page/picture/illust_store.dart';
+import 'package:pixez/utils/illust_result_options.dart';
 import 'package:waterfall_flow/waterfall_flow.dart';
 
 class WaterFallLoading extends StatefulWidget {
@@ -54,6 +56,7 @@ class LightingList extends StatefulWidget {
   final String? portal;
   final bool? ai;
   final bool Function(Illusts)? filter;
+  final Comparator<Illusts>? comparator;
 
   const LightingList(
       {Key? key,
@@ -63,7 +66,8 @@ class LightingList extends StatefulWidget {
       this.scrollController,
       this.portal,
       this.ai,
-      this.filter})
+      this.filter,
+      this.comparator})
       : super(key: key);
 
   @override
@@ -79,6 +83,7 @@ class _LightingListState extends State<LightingList> {
   @override
   void didUpdateWidget(LightingList oldWidget) {
     super.didUpdateWidget(oldWidget);
+    _ai = widget.ai ?? false;
     if (oldWidget.source != widget.source) {
       _store.source = widget.source;
       _fetch();
@@ -123,6 +128,7 @@ class _LightingListState extends State<LightingList> {
   }
 
   bool backToTopVisible = false;
+  bool _loadingFilteredPage = false;
 
   @override
   Widget build(BuildContext context) {
@@ -135,14 +141,8 @@ class _LightingListState extends State<LightingList> {
 
   late EasyRefreshController _refreshController;
 
-  Widget _buildWithoutHeader(context) {
-    _store.iStores.removeWhere((element) {
-      if (element.illusts!.hateByUser(ai: _ai)) return true;
-      if (widget.filter != null && !widget.filter!(element.illusts!)) {
-        return true;
-      }
-      return false;
-    });
+  Widget _buildWithoutHeader(
+      BuildContext context, List<IllustStore> visibleStores) {
     return NotificationListener<ScrollNotification>(
         onNotification: (ScrollNotification notification) {
           if (widget.isNested == true) {
@@ -171,9 +171,10 @@ class _LightingListState extends State<LightingList> {
             physics: physics,
             controller: widget.isNested ?? false ? null : _scrollController,
             padding: EdgeInsets.all(5.0),
-            itemCount: _store.iStores.length,
+            itemCount: visibleStores.length + (_canManuallyLoadMore ? 1 : 0),
             itemBuilder: (context, index) {
-              return _buildItem(index);
+              if (index == visibleStores.length) return _buildLoadMoreButton();
+              return _buildItem(index, visibleStores);
             },
             gridDelegate: _buildGridDelegate(),
           ),
@@ -196,15 +197,89 @@ class _LightingListState extends State<LightingList> {
   }
 
   Widget _buildContent(context) {
-    return _store.errorMessage != null
-        ? _buildErrorContent(context)
-        : _store.iStores.isNotEmpty
-            ? (widget.header != null
-                ? _buildWithHeader(context)
-                : _buildWithoutHeader(context))
-            : Container(
-                child: _store.refreshing ? WaterFallLoading() : Container(),
-              );
+    if (_store.errorMessage != null) return _buildErrorContent(context);
+    if (_store.iStores.isEmpty) {
+      return Container(
+        child: _store.refreshing ? WaterFallLoading() : Container(),
+      );
+    }
+
+    final visibleStores = _visibleStores();
+    if (visibleStores.isEmpty) return _buildEmptyFilteredContent(context);
+    return widget.header != null
+        ? _buildWithHeader(context, visibleStores)
+        : _buildWithoutHeader(context, visibleStores);
+  }
+
+  List<IllustStore> _visibleStores() {
+    final candidates = _store.iStores.where((element) {
+      final illust = element.illusts;
+      if (illust == null || illust.hateByUser(ai: _ai)) return false;
+      return widget.filter?.call(illust) ?? true;
+    });
+    Comparator<IllustStore>? storeComparator;
+    if (widget.comparator != null) {
+      storeComparator = (left, right) =>
+          widget.comparator!(left.illusts!, right.illusts!);
+    }
+    return stableSortedCopy(candidates, storeComparator);
+  }
+
+  Widget _buildEmptyFilteredContent(BuildContext context) {
+    final canLoadMore = _store.nextUrl?.isNotEmpty == true;
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(I18n.of(context).no_result),
+          if (canLoadMore)
+            TextButton(
+              onPressed:
+                  _loadingFilteredPage ? null : _loadMoreForFilteredResults,
+              child: _buildLoadMoreButtonContent(),
+            ),
+        ],
+      ),
+    );
+  }
+
+  bool get _canManuallyLoadMore =>
+      widget.filter != null && _store.nextUrl?.isNotEmpty == true;
+
+  Widget _buildLoadMoreButton() {
+    return Center(
+      child: TextButton(
+        onPressed: _loadingFilteredPage ? null : _loadMoreForFilteredResults,
+        child: _buildLoadMoreButtonContent(),
+      ),
+    );
+  }
+
+  Widget _buildLoadMoreButtonContent() {
+    return _loadingFilteredPage
+        ? const SizedBox(
+            width: 16,
+            height: 16,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          )
+        : Text(I18n.of(context).more);
+  }
+
+  Future<void> _loadMoreForFilteredResults() async {
+    if (_loadingFilteredPage || _store.requestInProgress) return;
+    setState(() {
+      _loadingFilteredPage = true;
+    });
+    final loaded = await _store.fetchNext();
+    if (!mounted) return;
+    setState(() {
+      _loadingFilteredPage = false;
+    });
+    if (!loaded) {
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        SnackBar(content: Text(I18n.of(context).loading_failed_retry_message)),
+      );
+    }
   }
 
   Widget _buildErrorContent(context) {
@@ -246,7 +321,8 @@ class _LightingListState extends State<LightingList> {
     return '(${Constants.tagName}) $message';
   }
 
-  Widget _buildWithHeader(BuildContext context) {
+  Widget _buildWithHeader(
+      BuildContext context, List<IllustStore> visibleStores) {
     return NotificationListener<ScrollNotification>(
       onNotification: (ScrollNotification notification) {
         ScrollMetrics metrics = notification.metrics;
@@ -279,7 +355,8 @@ class _LightingListState extends State<LightingList> {
               ),
               SliverWaterfallFlow(
                 gridDelegate: _buildGridDelegate(),
-                delegate: _buildSliverChildBuilderDelegate(context),
+                delegate:
+                    _buildSliverChildBuilderDelegate(context, visibleStores),
               ),
               const FooterLocator.sliver(),
             ],
@@ -290,21 +367,16 @@ class _LightingListState extends State<LightingList> {
   }
 
   SliverChildBuilderDelegate _buildSliverChildBuilderDelegate(
-      BuildContext context) {
-    _store.iStores.removeWhere((element) {
-      if (element.illusts!.hateByUser(ai: _ai)) return true;
-      if (widget.filter != null && !widget.filter!(element.illusts!)) {
-        return true;
-      }
-      return false;
-    });
+      BuildContext context, List<IllustStore> visibleStores) {
     return SliverChildBuilderDelegate((BuildContext context, int index) {
+      if (index == visibleStores.length) return _buildLoadMoreButton();
       return IllustCard(
         lightingStore: _store,
-        store: _store.iStores[index],
-        iStores: _store.iStores,
+        store: visibleStores[index],
+        iStores: visibleStores,
+        iStoresProvider: _visibleStores,
       );
-    }, childCount: _store.iStores.length);
+    }, childCount: visibleStores.length + (_canManuallyLoadMore ? 1 : 0));
   }
 
   SliverWaterfallFlowDelegate _buildGridDelegate() {
@@ -334,11 +406,12 @@ class _LightingListState extends State<LightingList> {
     return result;
   }
 
-  Widget _buildItem(int index) {
+  Widget _buildItem(int index, List<IllustStore> visibleStores) {
     return IllustCard(
-      store: _store.iStores[index],
+      store: visibleStores[index],
       lightingStore: _store,
-      iStores: _store.iStores,
+      iStores: visibleStores,
+      iStoresProvider: _visibleStores,
     );
   }
 }

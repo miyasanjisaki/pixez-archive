@@ -113,6 +113,8 @@ abstract class _LightingStoreBase with Store {
 
   bool _lock = false;
 
+  bool get requestInProgress => _lock;
+
   @action
   Future<bool> fetch({String? url, bool force = false}) async {
     if (_lock) return false;

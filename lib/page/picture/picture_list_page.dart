@@ -17,6 +17,7 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_mobx/flutter_mobx.dart';
+import 'package:pixez/i18n.dart';
 import 'package:pixez/lighting/lighting_store.dart';
 import 'package:pixez/main.dart';
 import 'package:pixez/page/picture/illust_lighting_page.dart';
@@ -25,6 +26,7 @@ import 'package:pixez/page/picture/illust_store.dart';
 class PictureListPage extends StatefulWidget {
   final IllustStore store;
   final List<IllustStore> iStores;
+  final List<IllustStore> Function()? iStoresProvider;
   final String? heroString;
   final LightingStore? lightingStore;
 
@@ -33,6 +35,7 @@ class PictureListPage extends StatefulWidget {
       required this.lightingStore,
       required this.store,
       required this.iStores,
+      this.iStoresProvider,
       this.heroString})
       : super(key: key);
 
@@ -51,7 +54,9 @@ class _PictureListPageState extends State<PictureListPage> {
   @override
   void initState() {
     _store = widget.store;
-    _iStores = widget.iStores;
+    _iStores = widget.iStoresProvider == null
+        ? widget.iStores
+        : List<IllustStore>.of(widget.iStores);
     _lightingStore = widget.lightingStore;
     nowPosition = _iStores.indexOf(_store);
     _pageController = PageController(initialPage: nowPosition);
@@ -68,6 +73,7 @@ class _PictureListPageState extends State<PictureListPage> {
   Widget build(BuildContext context) {
     screenWidth = MediaQuery.of(context).size.width / 2;
     return Observer(builder: (_) {
+      final iStores = _currentStores;
       return MediaQuery(
         data: MediaQuery.of(context)
             .copyWith(gestureSettings: DeviceGestureSettings(touchSlop: 50)),
@@ -77,12 +83,12 @@ class _PictureListPageState extends State<PictureListPage> {
               ? null
               : NeverScrollableScrollPhysics(),
           itemBuilder: (BuildContext context, int index) {
-            if (index == _iStores.length && _lightingStore != null) {
+            if (index == iStores.length && _lightingStore != null) {
               return PictureListNextPage(
                 lightingStore: _lightingStore!,
               );
             }
-            final f = _iStores[index];
+            final f = iStores[index];
             String? tag = nowPosition == index ? widget.heroString : null;
             return MediaQuery(
               data: MediaQuery.of(context).copyWith(
@@ -98,13 +104,25 @@ class _PictureListPageState extends State<PictureListPage> {
               ),
             );
           },
-          itemCount: _iStores.length + 1,
+          itemCount: iStores.length + (_lightingStore == null ? 0 : 1),
         ),
       );
     });
   }
 
+  List<IllustStore> get _currentStores {
+    final provider = widget.iStoresProvider;
+    if (provider == null) return _iStores;
+
+    final knownIds = _iStores.map((store) => store.id).toSet();
+    for (final store in provider()) {
+      if (knownIds.add(store.id)) _iStores.add(store);
+    }
+    return _iStores;
+  }
+
   _onDrag(DragEndDetails details) {
+    final iStores = _currentStores;
     final pixelsPerSecond = details.velocity.pixelsPerSecond;
     if (pixelsPerSecond.dy.abs() > pixelsPerSecond.dx.abs()) return;
     if (pixelsPerSecond.dx.abs() > screenWidth) {
@@ -115,7 +133,7 @@ class _PictureListPageState extends State<PictureListPage> {
         result--;
       _pageController.animateToPage(result,
           duration: Duration(milliseconds: 200), curve: Curves.easeInOut);
-      if (result >= _iStores.length) result = _iStores.length - 1;
+      if (result >= iStores.length) result = iStores.length - 1;
       if (result < 0) result = 0;
       setState(() {
         nowPosition = result;
@@ -143,7 +161,7 @@ class _PictureListNextPageState extends State<PictureListNextPage> {
   }
 
   _maybeFetch(bool firstIn) async {
-    if (_lightingStore.nextUrl == null) return;
+    if (_lightingStore.nextUrl?.isNotEmpty != true) return;
     try {
       if (!firstIn) {
         setState(() {
@@ -161,7 +179,7 @@ class _PictureListNextPageState extends State<PictureListNextPage> {
 
   @override
   Widget build(BuildContext context) {
-    if (_lightingStore.nextUrl == null) {
+    if (_lightingStore.nextUrl?.isNotEmpty != true) {
       return Scaffold(
         appBar: AppBar(),
         body: Center(child: Text("No More")),
@@ -181,6 +199,17 @@ class _PictureListNextPageState extends State<PictureListNextPage> {
                 child: Text("Retry"))
           ]),
         )),
+      );
+    }
+    if (loadResult == true) {
+      return Scaffold(
+        appBar: AppBar(),
+        body: Center(
+          child: TextButton(
+            onPressed: () => _maybeFetch(false),
+            child: Text(I18n.of(context).more),
+          ),
+        ),
       );
     }
     return Scaffold(

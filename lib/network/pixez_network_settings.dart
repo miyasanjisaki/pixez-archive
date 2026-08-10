@@ -42,7 +42,14 @@ class PixezNetworkSettings {
 
   static r.ClientSettings compatible() {
     return r.ClientSettings(
-      tlsSettings: r.TlsSettings(verifyCertificates: false, sni: false),
+      // DNS overrides must not weaken HTTPS. The request still targets the
+      // original hostname, so certificate verification and SNI remain valid
+      // even when the resolver supplies a custom IP address.
+      tlsSettings: r.TlsSettings(
+        verifyCertificates: true,
+        rootCertSource: r.RootCertSource.webpki,
+        sni: true,
+      ),
       dnsSettings: r.DnsSettings.dynamic(
         resolver: (host) async {
           final ip = _compatibleIp(host);

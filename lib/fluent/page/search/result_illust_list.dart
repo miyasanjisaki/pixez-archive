@@ -22,8 +22,10 @@ import 'package:pixez/i18n.dart';
 import 'package:pixez/fluent/lighting/fluent_lighting_page.dart';
 import 'package:pixez/lighting/lighting_store.dart';
 import 'package:pixez/main.dart';
+import 'package:pixez/models/illust.dart';
 import 'package:pixez/network/api_client.dart';
 import 'package:pixez/page/search/result_illust_store.dart';
+import 'package:pixez/utils/illust_result_options.dart';
 
 class ResultIllustList extends StatefulWidget {
   final String word;
@@ -42,12 +44,12 @@ class _ResultIllustListState extends State<ResultIllustList> {
 
   @override
   void initState() {
+    super.initState();
     _scrollController = ScrollController();
     futureGet = ApiForceSource(
         futureGet: (e) => apiClient.getSearchIllust(widget.word));
-    super.initState();
     listen = topStore.topStream.listen((event) {
-      if (event == "401") {
+      if (event == "401" && _scrollController.hasClients) {
         _scrollController.position.jumpTo(0);
       }
     });
@@ -56,6 +58,7 @@ class _ResultIllustListState extends State<ResultIllustList> {
   @override
   void dispose() {
     listen.cancel();
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -87,6 +90,8 @@ class _ResultIllustListState extends State<ResultIllustList> {
   ];
   String searchTarget = search_target[0];
   String selectSort = "date_desc";
+  IllustResultSort loadedResultSort = IllustResultSort.apiOrder;
+  IllustContentFilter contentFilter = IllustContentFilter.all;
   int selectStarNum = 0;
   // double starValue = 0.0;
 
@@ -99,9 +104,7 @@ class _ResultIllustListState extends State<ResultIllustList> {
           children: [
             IconButton(
                 icon: Icon(FluentIcons.date_time),
-                onPressed: () {
-                  _buildShowDateRange(context);
-                }),
+                onPressed: null),
             _buildStar(),
             IconButton(
                 icon: Icon(FluentIcons.filter),
@@ -115,28 +118,22 @@ class _ResultIllustListState extends State<ResultIllustList> {
       content: LightingList(
         source: futureGet,
         scrollController: _scrollController,
+        filter: contentFilter == IllustContentFilter.all
+            ? null
+            : _matchesContentFilter,
+        comparator: buildIllustResultComparator<Illusts>(
+          loadedResultSort,
+          bookmarksOf: (illust) => illust.totalBookmarks,
+          viewsOf: (illust) => illust.totalView,
+        ),
       ),
     );
   }
 
-  DateTimeRange? _dateTimeRange;
+  bool _matchesContentFilter(Illusts illust) =>
+      matchesIllustContent(illust.type, contentFilter);
 
-  Future _buildShowDateRange(BuildContext context) async {
-    throw Exception('Not Impliment');
-    // DateTimeRange? dateTimeRange = await showDateRangePicker(
-    //     context: context,
-    //     initialDateRange: _dateTimeRange,
-    //     firstDate: DateTime.fromMillisecondsSinceEpoch(
-    //         DateTime.now().millisecondsSinceEpoch -
-    //             (24 * 60 * 60 * 365 * 1000 * 8)),
-    //     lastDate: DateTime.now());
-    // if (dateTimeRange != null) {
-    //   _dateTimeRange = dateTimeRange;
-    //   setState(() {
-    //     _changeQueryParams();
-    //   });
-    // }
-  }
+  DateTimeRange? _dateTimeRange;
 
   _changeQueryParams() {
     if (_starValue == 0)
@@ -159,6 +156,11 @@ class _ResultIllustListState extends State<ResultIllustList> {
   }
 
   void _buildShowBottomSheet(BuildContext context) {
+    var pendingSearchTarget = searchTarget;
+    var pendingSelectSort = selectSort;
+    var pendingLoadedResultSort = loadedResultSort;
+    var pendingContentFilter = contentFilter;
+    final isPremium = accountStore.now?.isPremium == 1;
     showDialog(
       context: context,
       builder: (context) => ContentDialog(
@@ -177,7 +179,7 @@ class _ResultIllustListState extends State<ResultIllustList> {
                       child: SizedBox(
                         width: double.infinity,
                         child: ComboBox<int>(
-                          value: search_target.indexOf(searchTarget),
+                          value: search_target.indexOf(pendingSearchTarget),
                           items: [
                             ComboBoxItem(
                               child:
@@ -194,8 +196,9 @@ class _ResultIllustListState extends State<ResultIllustList> {
                             ),
                           ],
                           onChanged: (int? index) {
+                            if (index == null) return;
                             setS(() {
-                              searchTarget = search_target[index!];
+                              pendingSearchTarget = search_target[index];
                             });
                           },
                         ),
@@ -206,7 +209,7 @@ class _ResultIllustListState extends State<ResultIllustList> {
                       child: SizedBox(
                         width: double.infinity,
                         child: ComboBox<int>(
-                          value: sort.indexOf(selectSort),
+                          value: sort.indexOf(pendingSelectSort),
                           items: [
                             ComboBoxItem(
                               child: Text(I18n.of(context).date_desc),
@@ -220,30 +223,92 @@ class _ResultIllustListState extends State<ResultIllustList> {
                               child: Text(I18n.of(context).popular_desc),
                               value: 2,
                             ),
-                            ComboBoxItem(
-                              child: Text(I18n.of(context).popular_male_desc),
-                              value: 3,
-                            ),
-                            ComboBoxItem(
-                              child: Text(I18n.of(context).popular_female_desc),
-                              value: 4,
-                            ),
+                            if (isPremium) ...[
+                              ComboBoxItem(
+                                child:
+                                    Text(I18n.of(context).popular_male_desc),
+                                value: 3,
+                              ),
+                              ComboBoxItem(
+                                child:
+                                    Text(I18n.of(context).popular_female_desc),
+                                value: 4,
+                              ),
+                            ],
                           ],
                           onChanged: (int? index) {
-                            if (accountStore.now != null && index == 2) {
-                              if (accountStore.now!.isPremium == 0) {
-                                BotToast.showText(text: 'not premium');
-                                setState(() {
-                                  futureGet = ApiForceSource(
-                                      futureGet: (bool e) => apiClient
-                                          .getPopularPreview(widget.word));
-                                });
-                                Navigator.of(context).pop();
-                                return;
-                              }
+                            if (index == null) return;
+                            if (!isPremium && index == 2) {
+                              BotToast.showText(text: 'not premium');
+                              setState(() {
+                                futureGet = ApiForceSource(
+                                    futureGet: (bool e) =>
+                                        apiClient.getPopularPreview(widget.word));
+                              });
+                              Navigator.of(context).pop();
+                              return;
                             }
                             setS(() {
-                              selectSort = sort[index!];
+                              pendingSelectSort = sort[index];
+                            });
+                          },
+                        ),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.all(8.0),
+                      child: SizedBox(
+                        width: double.infinity,
+                        child: ComboBox<IllustResultSort>(
+                          value: pendingLoadedResultSort,
+                          items: [
+                            ComboBoxItem(
+                              value: IllustResultSort.apiOrder,
+                              child: Text(I18n.of(context).default_title),
+                            ),
+                            ComboBoxItem(
+                              value: IllustResultSort.bookmarksDesc,
+                              child:
+                                  Text('${I18n.of(context).total_bookmark} ↓'),
+                            ),
+                            ComboBoxItem(
+                              value: IllustResultSort.viewsDesc,
+                              child: Text('${I18n.of(context).total_view} ↓'),
+                            ),
+                          ],
+                          onChanged: (value) {
+                            if (value == null) return;
+                            setS(() {
+                              pendingLoadedResultSort = value;
+                            });
+                          },
+                        ),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.all(8.0),
+                      child: SizedBox(
+                        width: double.infinity,
+                        child: ComboBox<IllustContentFilter>(
+                          value: pendingContentFilter,
+                          items: [
+                            ComboBoxItem(
+                              value: IllustContentFilter.all,
+                              child: Text(I18n.of(context).all),
+                            ),
+                            ComboBoxItem(
+                              value: IllustContentFilter.illustration,
+                              child: Text(I18n.of(context).illust),
+                            ),
+                            ComboBoxItem(
+                              value: IllustContentFilter.manga,
+                              child: Text(I18n.of(context).manga),
+                            ),
+                          ],
+                          onChanged: (value) {
+                            if (value == null) return;
+                            setS(() {
+                              pendingContentFilter = value;
                             });
                           },
                         ),
@@ -261,8 +326,15 @@ class _ResultIllustListState extends State<ResultIllustList> {
         actions: [
           FilledButton(
             onPressed: () {
+              final serverQueryChanged =
+                  pendingSearchTarget != searchTarget ||
+                      pendingSelectSort != selectSort;
               setState(() {
-                _changeQueryParams();
+                searchTarget = pendingSearchTarget;
+                selectSort = pendingSelectSort;
+                loadedResultSort = pendingLoadedResultSort;
+                contentFilter = pendingContentFilter;
+                if (serverQueryChanged) _changeQueryParams();
               });
               Navigator.of(context).pop();
             },

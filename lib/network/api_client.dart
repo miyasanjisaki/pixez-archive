@@ -122,9 +122,10 @@ class ApiClient {
     if (kDebugMode) {
       httpClient.interceptors.add(
         LogInterceptor(
-          responseBody: true,
-          responseHeader: true,
-          requestBody: true,
+          requestHeader: false,
+          requestBody: false,
+          responseHeader: false,
+          responseBody: false,
         ),
       );
     }
