@@ -25,11 +25,6 @@ class NovelPage extends StatefulWidget {
 class _NovelPageState extends State<NovelPage> {
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(),
-      body: Container(
-        child: NovelRecomPage(),
-      ),
-    );
+    return NovelRecomPage();
   }
 }

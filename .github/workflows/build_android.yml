@@ -208,3 +208,13 @@ jobs:
             build/app/outputs/flutter-apk/SHA256SUMS.txt
           if-no-files-found: error
           compression-level: 0
+
+      - name: 单独上传 ARM64 APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: android-arm64-debug-apk
+          path: |-
+            build/app/outputs/flutter-apk/app-arm64-v8a-debug.apk
+            build/app/outputs/flutter-apk/SHA256SUMS.txt
+          if-no-files-found: error
+          compression-level: 0

@@ -20,7 +20,8 @@ class _NovelResultListState extends State<NovelResultList> {
   @override
   void initState() {
     futureGet = ApiForceSource(
-        futureGet: (bool e) => apiClient.getSearchNovel(widget.word));
+      futureGet: (bool e) => apiClient.getSearchNovel(widget.word),
+    );
     super.initState();
   }
 
@@ -29,45 +30,36 @@ class _NovelResultListState extends State<NovelResultList> {
     return Container(
       child: Column(
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: <Widget>[
-              InkWell(
-                onTap: () {},
-                child: Container(
-                  width: MediaQuery.of(context).size.width * 2 / 3,
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: Padding(
-                      padding: EdgeInsets.only(left: 16.0),
-                      child: Text(
-                        widget.word,
-                        textAlign: TextAlign.center,
-                      ),
+          SizedBox(
+            height: 56,
+            child: Row(
+              children: <Widget>[
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.only(left: 16, right: 4),
+                    child: Text(
+                      widget.word,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.titleSmall,
                     ),
                   ),
                 ),
-              ),
-              Align(
-                alignment: Alignment.centerRight,
-                child: Row(
-                  children: [
-                    IconButton(
-                        icon: Icon(Icons.date_range),
-                        onPressed: () {
-                          _buildShowDateRange(context);
-                        }),
-                    _buildStar(),
-                    IconButton(
-                        icon: Icon(Icons.filter_alt_outlined),
-                        onPressed: () {
-                          _buildShowBottomSheet(context);
-                          // _showMaterialBottom();
-                        }),
-                  ],
+                IconButton(
+                  tooltip: MaterialLocalizations.of(
+                    context,
+                  ).dateRangePickerHelpText,
+                  icon: const Icon(Icons.date_range_outlined),
+                  onPressed: () => _buildShowDateRange(context),
                 ),
-              )
-            ],
+                _buildStar(),
+                IconButton(
+                  tooltip: I18n.of(context).filter,
+                  icon: const Icon(Icons.tune),
+                  onPressed: () => _buildShowBottomSheet(context),
+                ),
+              ],
+            ),
           ),
           Expanded(
             child: NovelLightingList(futureGet: () => futureGet.fetch(false)),
@@ -96,7 +88,7 @@ class _NovelResultListState extends State<NovelResultList> {
     "partial_match_for_tags",
     "exact_match_for_tags",
     "text",
-    "keyword"
+    "keyword",
   ];
   String searchTarget = search_target[0];
   String selectSort = "date_desc";
@@ -106,12 +98,13 @@ class _NovelResultListState extends State<NovelResultList> {
 
   Future _buildShowDateRange(BuildContext context) async {
     DateTimeRange? dateTimeRange = await showDateRangePicker(
-        context: context,
-        initialDateRange: _dateTimeRange,
-        firstDate: DateTime.fromMillisecondsSinceEpoch(
-            DateTime.now().millisecondsSinceEpoch -
-                (24 * 60 * 60 * 365 * 1000 * 8)),
-        lastDate: DateTime.now());
+      context: context,
+      initialDateRange: _dateTimeRange,
+      firstDate: DateTime.fromMillisecondsSinceEpoch(
+        DateTime.now().millisecondsSinceEpoch - (24 * 60 * 60 * 365 * 1000 * 8),
+      ),
+      lastDate: DateTime.now(),
+    );
     if (dateTimeRange != null) {
       _dateTimeRange = dateTimeRange;
       setState(() {
@@ -126,144 +119,143 @@ class _NovelResultListState extends State<NovelResultList> {
   _changeQueryParams() {
     if (_starValue == 0)
       futureGet = ApiForceSource(
-          futureGet: (bool e) => apiClient.getSearchNovel(widget.word,
-              search_target: searchTarget,
-              sort: selectSort,
-              start_date: _dateTimeRange?.start,
-              end_date: _dateTimeRange?.end));
+        futureGet: (bool e) => apiClient.getSearchNovel(
+          widget.word,
+          search_target: searchTarget,
+          sort: selectSort,
+          start_date: _dateTimeRange?.start,
+          end_date: _dateTimeRange?.end,
+        ),
+      );
     else
       futureGet = ApiForceSource(
-          futureGet: (bool e) => apiClient.getSearchNovel(
-              '${widget.word} ${_starValue}users入り',
-              search_target: searchTarget,
-              sort: selectSort,
-              start_date: _dateTimeRange?.start,
-              end_date: _dateTimeRange?.end));
+        futureGet: (bool e) => apiClient.getSearchNovel(
+          '${widget.word} ${_starValue}users入り',
+          search_target: searchTarget,
+          sort: selectSort,
+          start_date: _dateTimeRange?.start,
+          end_date: _dateTimeRange?.end,
+        ),
+      );
   }
 
   void _buildShowBottomSheet(BuildContext context) {
     showModalBottomSheet(
-        context: context,
-        shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.vertical(top: Radius.circular(8.0))),
-        builder: (context) {
-          return StatefulBuilder(builder: (_, setS) {
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(8.0)),
+      ),
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (_, setS) {
             return SafeArea(
               child: Container(
-                  width: MediaQuery.of(context).size.width,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: <Widget>[
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: <Widget>[
-                          TextButton(
-                              onPressed: () {},
-                              child: Text(I18n.of(context).filter,
-                                  style: TextStyle(
-                                      color: Theme.of(context)
-                                          .colorScheme
-                                          .secondary))),
-                          TextButton(
-                              onPressed: () {
-                                setState(() {
-                                  _changeQueryParams();
-                                });
+                width: MediaQuery.of(context).size.width,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: <Widget>[
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: <Widget>[
+                        TextButton(
+                          onPressed: () {},
+                          child: Text(
+                            I18n.of(context).filter,
+                            style: TextStyle(
+                              color: Theme.of(context).colorScheme.secondary,
+                            ),
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: () {
+                            setState(() {
+                              _changeQueryParams();
+                            });
+                            Navigator.of(context).pop();
+                          },
+                          child: Text(
+                            I18n.of(context).apply,
+                            style: TextStyle(
+                              color: Theme.of(context).colorScheme.secondary,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.all(8.0),
+                      child: SizedBox(
+                        width: double.infinity,
+                        child: CupertinoSlidingSegmentedControl(
+                          groupValue: search_target.indexOf(searchTarget),
+                          children: <int, Widget>{
+                            0: Text(
+                              I18n.of(context).partial_match_for_tag,
+                              maxLines: 1,
+                            ),
+                            1: Text(
+                              I18n.of(context).exact_match_for_tag,
+                              maxLines: 1,
+                            ),
+                            2: Text(I18n.of(context).text, maxLines: 1),
+                            3: Text(I18n.of(context).key_word, maxLines: 1),
+                          },
+                          onValueChanged: (int? index) {
+                            setS(() {
+                              searchTarget = search_target[index!];
+                            });
+                          },
+                        ),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.all(8.0),
+                      child: SizedBox(
+                        width: double.infinity,
+                        child: CupertinoSlidingSegmentedControl(
+                          groupValue: sort.indexOf(selectSort),
+                          children: <int, Widget>{
+                            0: Text(I18n.of(context).date_desc, maxLines: 1),
+                            1: Text(I18n.of(context).date_asc, maxLines: 1),
+                            2: Text(I18n.of(context).popular_desc, maxLines: 1),
+                          },
+                          onValueChanged: (int? index) {
+                            if (accountStore.now != null && index == 2) {
+                              if (accountStore.now!.isPremium == 0) {
+                                BotToast.showText(text: 'not premium');
                                 Navigator.of(context).pop();
-                              },
-                              child: Text(I18n.of(context).apply,
-                                  style: TextStyle(
-                                      color: Theme.of(context)
-                                          .colorScheme
-                                          .secondary))),
-                        ],
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.all(8.0),
-                        child: SizedBox(
-                          width: double.infinity,
-                          child: CupertinoSlidingSegmentedControl(
-                            groupValue: search_target.indexOf(searchTarget),
-                            children: <int, Widget>{
-                              0: Text(
-                                I18n.of(context).partial_match_for_tag,
-                                maxLines: 1,
-                              ),
-                              1: Text(
-                                I18n.of(context).exact_match_for_tag,
-                                maxLines: 1,
-                              ),
-                              2: Text(
-                                I18n.of(context).text,
-                                maxLines: 1,
-                              ),
-                              3: Text(
-                                I18n.of(context).key_word,
-                                maxLines: 1,
-                              ),
-                            },
-                            onValueChanged: (int? index) {
-                              setS(() {
-                                searchTarget = search_target[index!];
-                              });
-                            },
-                          ),
-                        ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.all(8.0),
-                        child: SizedBox(
-                          width: double.infinity,
-                          child: CupertinoSlidingSegmentedControl(
-                            groupValue: sort.indexOf(selectSort),
-                            children: <int, Widget>{
-                              0: Text(
-                                I18n.of(context).date_desc,
-                                maxLines: 1,
-                              ),
-                              1: Text(
-                                I18n.of(context).date_asc,
-                                maxLines: 1,
-                              ),
-                              2: Text(
-                                I18n.of(context).popular_desc,
-                                maxLines: 1,
-                              ),
-                            },
-                            onValueChanged: (int? index) {
-                              if (accountStore.now != null && index == 2) {
-                                if (accountStore.now!.isPremium == 0) {
-                                  BotToast.showText(text: 'not premium');
-                                  Navigator.of(context).pop();
-                                  return;
-                                }
+                                return;
                               }
-                              setS(() {
-                                selectSort = sort[index!];
-                              });
-                            },
-                          ),
+                            }
+                            setS(() {
+                              selectSort = sort[index!];
+                            });
+                          },
                         ),
                       ),
-                      Container(
-                        height: 16,
-                      )
-                    ],
-                  )),
+                    ),
+                    Container(height: 16),
+                  ],
+                ),
+              ),
             );
-          });
-        });
+          },
+        );
+      },
+    );
   }
 
   Widget _buildStar() {
-    return PopupMenuButton(
+    return PopupMenuButton<int>(
       initialValue: _starValue,
-      child: Icon(
-        Icons.sort,
-      ),
+      tooltip: I18n.of(context).novel_bookmarks,
+      icon: const Icon(Icons.bookmark_outline),
       shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.all(Radius.circular(16.0))),
+        borderRadius: BorderRadius.all(Radius.circular(16.0)),
+      ),
       itemBuilder: (context) {
         return starNum.map((int value) {
           if (value > 0) {

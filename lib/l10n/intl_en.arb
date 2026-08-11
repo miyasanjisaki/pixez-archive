@@ -350,5 +350,16 @@
   "network_mode_standard": "Standard connection",
   "network_mode_standard_message": "Recommended for most networks.",
   "ignore_current_version_update": "Ignore current version update",
-  "haptic_feedback": "Haptic feedback"
+  "haptic_feedback": "Haptic feedback",
+  "reading_progress": "Reading progress",
+  "save_reading_position": "Save reading position",
+  "clear_reading_position": "Clear saved reading position",
+  "reading_settings": "Reading settings",
+  "reset": "Reset",
+  "reader_preview": "Adjust the text until long-form reading feels comfortable.",
+  "font_size": "Font size",
+  "line_spacing": "Line spacing",
+  "novel_bookmarks": "Bookmarks",
+  "novel_views": "Reads",
+  "novel_likes": "Likes"
 }

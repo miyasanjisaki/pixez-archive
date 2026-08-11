@@ -50,18 +50,27 @@ abstract class _NovelStoreBase with Store {
   @observable
   double bookedOffset = 0.0;
   @observable
+  double? bookedProgress;
+  @observable
   List<NovelSpansData> spans = [];
 
   NovelViewerPersistProvider _novelViewerPersistProvider =
       NovelViewerPersistProvider();
 
   @action
-  bookPosition(double offset) async {
-    LPrinter.d("bookPosition $offset");
+  bookPosition(double offset, {double? progress}) async {
+    final normalizedProgress = progress?.clamp(0, 1).toDouble();
+    LPrinter.d("bookPosition $offset progress=$normalizedProgress");
     await _novelViewerPersistProvider.open();
     await _novelViewerPersistProvider.insert(
-      NovelViewerPersist(novelId: id, offset: offset),
+      NovelViewerPersist(
+        novelId: id,
+        offset: offset,
+        progress: normalizedProgress,
+      ),
     );
+    bookedOffset = offset;
+    bookedProgress = normalizedProgress;
     positionBooked = true;
   }
 
@@ -71,6 +80,8 @@ abstract class _NovelStoreBase with Store {
     await _novelViewerPersistProvider.open();
     await _novelViewerPersistProvider.delete(id);
     positionBooked = false;
+    bookedOffset = 0;
+    bookedProgress = null;
   }
 
   @action
@@ -78,6 +89,7 @@ abstract class _NovelStoreBase with Store {
     errorMessage = null;
     try {
       bookedOffset = 0.0;
+      bookedProgress = null;
       final response = await apiClient.webviewNovel(id);
       final json = parseNovelJsonFromHtml(response.data);
       if (json == null) {
@@ -106,6 +118,7 @@ abstract class _NovelStoreBase with Store {
         LPrinter.d("fetchOffset ${result.offset}");
         positionBooked = true;
         bookedOffset = result.offset;
+        bookedProgress = result.progress?.clamp(0, 1).toDouble();
       }
     } catch (e) {}
   }

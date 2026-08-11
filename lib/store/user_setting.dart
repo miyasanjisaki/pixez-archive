@@ -33,6 +33,7 @@ import 'package:pixez/network/oauth_client.dart';
 import 'package:pixez/page/about/languages.dart';
 import 'package:pixez/secure_plugin.dart';
 import 'package:pixez/store/welcome_page_type.dart';
+import 'package:pixez/utils/novel_reader_options.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 part 'user_setting.g.dart';
@@ -68,6 +69,7 @@ abstract class _UserSetting with Store {
   static const String THEME_MODE_KEY = "theme_mode";
   static const String SAVE_MODE_KEY = "save_mode";
   static const String NOVEL_FONT_SIZE_KEY = "novel_font_size";
+  static const String NOVEL_LINE_HEIGHT_KEY = "novel_line_height";
   static const String IS_RETURN_AGAIN_TO_EXIT_KEY = "return_again_to_exit";
   static const String IS_CLEAR_OLD_FORMAT_FILE_KEY = "is_clear_old_format_file";
   static const String IS_FOLLOW_AFTER_STAR = "is_follow_after_star";
@@ -170,7 +172,9 @@ abstract class _UserSetting with Store {
 
   bool get needsCompatibleDnsFetch => networkMode == NetworkMode.compat;
   @observable
-  double novelFontsize = 16.0;
+  double novelFontsize = defaultNovelFontSize;
+  @observable
+  double novelLineHeight = defaultNovelLineHeight;
   @observable
   dynamic locale = Locale('en', 'US'); //stupid mobx generator
   @observable
@@ -376,15 +380,40 @@ abstract class _UserSetting with Store {
 
   @action
   setNovelFontsizeWithoutSave(double v) async {
-    novelFontsize = v;
-    novelTextStyle = novelTextStyle.copyWith(fontSize: novelFontsize);
+    novelFontsize = clampNovelFontSize(v);
+    novelTextStyle = novelTextStyle.copyWith(
+      fontSize: novelFontsize,
+      height: novelLineHeight,
+    );
   }
 
   @action
   setNovelFontsize(double v) async {
-    await prefs.setDouble(NOVEL_FONT_SIZE_KEY, v);
-    novelFontsize = v;
-    novelTextStyle = novelTextStyle.copyWith(fontSize: novelFontsize);
+    novelFontsize = clampNovelFontSize(v);
+    await prefs.setDouble(NOVEL_FONT_SIZE_KEY, novelFontsize);
+    novelTextStyle = novelTextStyle.copyWith(
+      fontSize: novelFontsize,
+      height: novelLineHeight,
+    );
+  }
+
+  @action
+  setNovelLineHeightWithoutSave(double v) async {
+    novelLineHeight = clampNovelLineHeight(v);
+    novelTextStyle = novelTextStyle.copyWith(
+      fontSize: novelFontsize,
+      height: novelLineHeight,
+    );
+  }
+
+  @action
+  setNovelLineHeight(double v) async {
+    novelLineHeight = clampNovelLineHeight(v);
+    await prefs.setDouble(NOVEL_LINE_HEIGHT_KEY, novelLineHeight);
+    novelTextStyle = novelTextStyle.copyWith(
+      fontSize: novelFontsize,
+      height: novelLineHeight,
+    );
   }
 
   @action
@@ -565,8 +594,16 @@ abstract class _UserSetting with Store {
     nsfwMask = prefs.getBool(NSFW_MASK_KEY) ?? false;
     saveAfterStar = prefs.getBool(SAVE_AFTER_STAR) ?? false;
     starAfterSave = prefs.getBool(STAR_AFTER_SAVE) ?? false;
-    novelFontsize = prefs.getDouble(NOVEL_FONT_SIZE_KEY) ?? 16.0;
-    novelTextStyle = novelTextStyle.copyWith(fontSize: novelFontsize);
+    novelFontsize = clampNovelFontSize(
+      prefs.getDouble(NOVEL_FONT_SIZE_KEY) ?? defaultNovelFontSize,
+    );
+    novelLineHeight = clampNovelLineHeight(
+      prefs.getDouble(NOVEL_LINE_HEIGHT_KEY) ?? defaultNovelLineHeight,
+    );
+    novelTextStyle = novelTextStyle.copyWith(
+      fontSize: novelFontsize,
+      height: novelLineHeight,
+    );
     saveMode =
         prefs.getInt(SAVE_MODE_KEY) ??
         (isHelplessWay == null ? 0 : (isHelplessWay! ? 2 : 1));

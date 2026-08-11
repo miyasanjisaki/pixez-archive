@@ -35,25 +35,36 @@ abstract class _NovelLightingStoreBase with Store {
 
   String? nextUrl;
   ObservableList<NovelStore> novels = ObservableList();
+  int _dataGeneration = 0;
+  int? _nextGenerationInProgress;
   @observable
   String? errorMessage;
 
   @action
   Future<void> fetch() async {
+    final generation = ++_dataGeneration;
+    if (_nextGenerationInProgress != null) {
+      controller.finishLoad(IndicatorResult.fail);
+      controller.resetFooter();
+    }
     nextUrl = null;
     errorMessage = null;
     try {
       Response response = await source();
-      NovelRecomResponse novelRecomResponse =
-          NovelRecomResponse.fromJson(response.data);
+      if (generation != _dataGeneration) return;
+      NovelRecomResponse novelRecomResponse = NovelRecomResponse.fromJson(
+        response.data,
+      );
       nextUrl = novelRecomResponse.nextUrl;
+      if (nextUrl?.isNotEmpty == true) controller.resetFooter();
       final novel = novelRecomResponse.novels;
       this.novels.clear();
-      this
-          .novels
-          .addAll(novel.map((element) => NovelStore(element.id, element)));
+      this.novels.addAll(
+        novel.map((element) => NovelStore(element.id, element)),
+      );
       controller.finishRefresh(IndicatorResult.success);
     } catch (e) {
+      if (generation != _dataGeneration) return;
       print(e);
       errorMessage = e.toString();
       controller.finishRefresh(IndicatorResult.fail);
@@ -62,17 +73,31 @@ abstract class _NovelLightingStoreBase with Store {
 
   @action
   Future<void> next() async {
+    final generation = _dataGeneration;
+    if (_nextGenerationInProgress == generation) {
+      controller.finishLoad(IndicatorResult.fail);
+      return;
+    }
     if (nextUrl != null && nextUrl!.isNotEmpty) {
+      _nextGenerationInProgress = generation;
       try {
         Response response = await _client.getNext(nextUrl!);
-        NovelRecomResponse novelRecomResponse =
-            NovelRecomResponse.fromJson(response.data);
+        if (generation != _dataGeneration) return;
+        NovelRecomResponse novelRecomResponse = NovelRecomResponse.fromJson(
+          response.data,
+        );
         nextUrl = novelRecomResponse.nextUrl;
         final novel = novelRecomResponse.novels;
         novels.addAll(novel.map((element) => NovelStore(element.id, element)));
         controller.finishLoad(IndicatorResult.success);
       } catch (e) {
-        controller.finishLoad(IndicatorResult.fail);
+        if (generation == _dataGeneration) {
+          controller.finishLoad(IndicatorResult.fail);
+        }
+      } finally {
+        if (_nextGenerationInProgress == generation) {
+          _nextGenerationInProgress = null;
+        }
       }
     } else {
       controller.finishLoad(IndicatorResult.noMore);

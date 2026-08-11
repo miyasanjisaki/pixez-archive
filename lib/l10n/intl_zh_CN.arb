@@ -351,5 +351,16 @@
   "network_mode_standard": "标准连接",
   "network_mode_standard_message": "大多数网络环境推荐使用。",
   "ignore_current_version_update": "忽略当前版本更新",
-  "haptic_feedback": "触感反馈"
+  "haptic_feedback": "触感反馈",
+  "reading_progress": "阅读进度",
+  "save_reading_position": "保存阅读位置",
+  "clear_reading_position": "清除已保存的阅读位置",
+  "reading_settings": "阅读设置",
+  "reset": "重置",
+  "reader_preview": "调整文字与行距，让长篇阅读更舒适。",
+  "font_size": "字号",
+  "line_spacing": "行距",
+  "novel_bookmarks": "收藏数",
+  "novel_views": "阅读数",
+  "novel_likes": "点赞"
 }
