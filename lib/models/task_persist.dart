@@ -136,20 +136,47 @@ final String indexTaskUrl = 'task_url_unique';
 /// while the queue always stores the original decoded file name.
 String normalizeDownloadedImageName(String value) {
   var candidate = value.trim();
-  final uri = Uri.tryParse(candidate);
-  if (uri != null) {
-    candidate =
-        uri.queryParameters['displayName'] ??
-        uri.queryParameters['name'] ??
-        (uri.pathSegments.isNotEmpty ? uri.pathSegments.last : candidate);
-  }
-  try {
-    candidate = Uri.decodeComponent(candidate);
-  } on FormatException {
-    // Keep the provider-supplied name if its percent escaping is malformed.
+  final queryName =
+      _rawQueryValue(candidate, 'displayName') ??
+      _rawQueryValue(candidate, 'name');
+  if (queryName != null) {
+    candidate = _decodeUriName(queryName, plusAsSpace: true);
+  } else {
+    final uri = Uri.tryParse(candidate);
+    try {
+      if (uri != null && uri.pathSegments.isNotEmpty) {
+        // pathSegments are already percent-decoded by Uri.
+        candidate = uri.pathSegments.last;
+      } else {
+        candidate = _decodeUriName(candidate);
+      }
+    } on FormatException {
+      candidate = _decodeUriName(candidate);
+    } on ArgumentError {
+      candidate = _decodeUriName(candidate);
+    }
   }
   candidate = candidate.replaceAll('\\', '/').split('/').last.trim();
   return candidate.toLowerCase();
+}
+
+String? _rawQueryValue(String value, String key) {
+  return RegExp(
+    '(?:[?&])${RegExp.escape(key)}=([^&#]*)',
+    caseSensitive: false,
+  ).firstMatch(value)?.group(1);
+}
+
+String _decodeUriName(String value, {bool plusAsSpace = false}) {
+  final candidate = plusAsSpace ? value.replaceAll('+', ' ') : value;
+  try {
+    return Uri.decodeComponent(candidate);
+  } on FormatException {
+    return candidate;
+  } on ArgumentError {
+    // Dart also reports non-ASCII or truncated percent input as ArgumentError.
+    return candidate;
+  }
 }
 
 String _withoutCollisionSuffix(String fileName) {

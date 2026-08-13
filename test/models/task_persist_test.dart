@@ -54,6 +54,37 @@ void main() {
     );
   });
 
+  test('keeps decoded and malformed picker display names usable', () {
+    expect(
+      normalizeDownloadedImageName(
+        'content://picker/item?displayName=already decoded 名称.JPG',
+      ),
+      'already decoded 名称.jpg',
+    );
+    expect(
+      normalizeDownloadedImageName(
+        'content://picker/item?displayName=bad%GZ+name.JPG',
+      ),
+      'bad%gz name.jpg',
+    );
+    expect(
+      normalizeDownloadedImageName(
+        'content://picker/item?name=wrong.jpg&displayName=%E4%B8%AD%E6%96%87%20%281%29.JPG',
+      ),
+      '中文 (1).jpg',
+    );
+    expect(
+      normalizeDownloadedImageName(
+        'content://picker/item?displayName=100%25+complete.JPG',
+      ),
+      '100% complete.jpg',
+    );
+    expect(
+      normalizeDownloadedImageName('100% complete.JPG'),
+      '100% complete.jpg',
+    );
+  });
+
   test('does not guess when custom download names are ambiguous', () {
     TaskPersist completed(int id, int illustId) => TaskPersist(
       id: id,
