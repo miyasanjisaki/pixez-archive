@@ -23,8 +23,9 @@ class _State extends ConsumerState<WatchlistPage> {
   @override
   Widget build(BuildContext context) {
     final controller = ref.watch(watchlistStoreProvider.notifier).controller;
-    final mangaSeries =
-        ref.watch(watchlistStoreProvider.select((e) => e.mangaSeries));
+    final mangaSeries = ref.watch(
+      watchlistStoreProvider.select((e) => e.mangaSeries),
+    );
     useEffect(() {
       Future.delayed(Duration.zero, () {
         ref.read(watchlistStoreProvider.notifier).fetch();
@@ -46,12 +47,10 @@ class _State extends ConsumerState<WatchlistPage> {
           physics: physics,
           slivers: [
             SliverList(
-                delegate: SliverChildBuilderDelegate(
-              (context, index) {
+              delegate: SliverChildBuilderDelegate((context, index) {
                 return MangaSeriesItem(data: mangaSeries[index]);
-              },
-              childCount: mangaSeries.length,
-            )),
+              }, childCount: mangaSeries.length),
+            ),
           ],
         );
       },
@@ -72,9 +71,7 @@ class MangaSeriesItem extends StatelessWidget {
       behavior: HitTestBehavior.opaque,
       child: Column(
         children: [
-          SizedBox(
-            height: 12,
-          ),
+          SizedBox(height: 12),
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -89,73 +86,85 @@ class MangaSeriesItem extends StatelessWidget {
                         data.url ?? '',
                         width: 120,
                         fit: BoxFit.fitWidth,
+                        optimizeForList: true,
                       ),
                       Positioned(
                         top: 0,
                         right: 0,
                         child: Container(
                           margin: EdgeInsets.only(top: 4, right: 4),
-                          padding:
-                              EdgeInsets.symmetric(horizontal: 2, vertical: 2),
+                          padding: EdgeInsets.symmetric(
+                            horizontal: 2,
+                            vertical: 2,
+                          ),
                           decoration: BoxDecoration(
                             color: Colors.black.withValues(alpha: 0.3),
                             borderRadius: BorderRadius.all(Radius.circular(12)),
                           ),
-                          child: Text('${data.publishedContentCount}',
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .bodySmall!
-                                  .copyWith(color: Colors.white)),
+                          child: Text(
+                            '${data.publishedContentCount}',
+                            style: Theme.of(context).textTheme.bodySmall!
+                                .copyWith(color: Colors.white),
+                          ),
                         ),
                       ),
                     ],
                   ),
                 ),
               ),
-              SizedBox(
-                width: 12,
-              ),
+              SizedBox(width: 12),
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(data.title,
-                      style: Theme.of(context).textTheme.titleMedium),
+                  Text(
+                    data.title,
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
                   Row(
                     children: [
                       Text(
                         data.user?.name ?? '',
                         style: Theme.of(context).textTheme.labelLarge,
-                      )
+                      ),
                     ],
                   ),
                   SizedBox(height: 4),
-                  Text(data.lastPublishedContentDatetime?.toShortTime() ?? '',
-                      style: Theme.of(context).textTheme.bodySmall),
+                  Text(
+                    data.lastPublishedContentDatetime?.toShortTime() ?? '',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
                   SizedBox(height: 8),
                   ClipRRect(
-                      borderRadius: BorderRadius.circular(24),
-                      child: InkWell(
-                        onTap: () {
-                          Leader.push(context,
-                              IllustLightingPage(id: data.latestContentId));
-                        },
-                        child: Container(
-                            padding: EdgeInsets.symmetric(
-                                horizontal: 14, vertical: 6),
-                            decoration: BoxDecoration(
-                              color: Theme.of(context).colorScheme.primary,
-                            ),
-                            child: Text(I18n.of(context).view_latest,
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .bodyMedium!
-                                    .copyWith(color: Colors.white))),
-                      ))
+                    borderRadius: BorderRadius.circular(24),
+                    child: InkWell(
+                      onTap: () {
+                        Leader.push(
+                          context,
+                          IllustLightingPage(id: data.latestContentId),
+                        );
+                      },
+                      child: Container(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 6,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
+                        child: Text(
+                          I18n.of(context).view_latest,
+                          style: Theme.of(
+                            context,
+                          ).textTheme.bodyMedium!.copyWith(color: Colors.white),
+                        ),
+                      ),
+                    ),
+                  ),
                 ],
               ),
             ],
           ),
-          Divider()
+          Divider(),
         ],
       ),
     );

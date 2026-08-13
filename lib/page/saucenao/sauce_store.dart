@@ -21,22 +21,19 @@ import 'dart:typed_data';
 
 import 'package:bot_toast/bot_toast.dart';
 import 'package:dio/dio.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:fluent_ui/fluent_ui.dart' as fluent;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_mobx/flutter_mobx.dart';
 import 'package:image/image.dart';
-import 'package:image_picker/image_picker.dart';
-import 'package:image_picker_android/image_picker_android.dart';
-import 'package:image_picker_platform_interface/image_picker_platform_interface.dart';
 import 'package:mobx/mobx.dart';
 import 'package:pixez/er/lprinter.dart';
-import 'package:pixez/er/prefer.dart';
 import 'package:pixez/i18n.dart';
 import 'package:pixez/main.dart';
+import 'package:pixez/models/download_identity_index.dart';
+import 'package:pixez/models/task_persist.dart';
 import 'package:pixez/utils/pixiv_image_identity.dart';
 import 'package:pixez/utils/saucenao_result_parser.dart';
-import 'package:url_launcher/url_launcher_string.dart';
 
 part 'sauce_store.g.dart';
 
@@ -126,13 +123,8 @@ abstract class SauceStoreBase with Store {
           ? SauceSearchPhase.picking
           : SauceSearchPhase.inspecting;
 
-      if (path == null && Platform.isAndroid && context != null) {
-        await _showAndroidPickerChoice(context);
-        if (!context.mounted) return null;
-      }
-
       String? pickedName;
-      XFile? pickedFile;
+      PlatformFile? pickedFile;
       if (path == null) {
         pickedFile = await _pickImage();
         if (pickedFile == null) {
@@ -140,8 +132,8 @@ abstract class SauceStoreBase with Store {
           phase.value = SauceSearchPhase.idle;
           return null;
         }
-        // XFile.name retains the Android Photo Picker display name even when
-        // XFile.path points at a temporary cache copy.
+        // PlatformFile.name is the provider DISPLAY_NAME. Do not infer image
+        // identity from its temporary cache path on Android.
         pickedName = pickedFile.name;
         path = pickedFile.path;
         phase.value = SauceSearchPhase.inspecting;
@@ -158,16 +150,29 @@ abstract class SauceStoreBase with Store {
         return _finish([localId], matchedLocally: true);
       }
 
+      // Completed task rows predate the content-hash index. Treat a unique
+      // filename match only as a user-confirmed hint after stronger exact
+      // identity checks; never persist the selected bytes under that hint.
+      final completedTask = pickedName == null
+          ? null
+          : await _completedTaskForName(pickedName);
+
       final inputLength = pickedFile != null
           ? await pickedFile.length()
-          : await File(selectedPath).length();
-      if (inputLength > _maxInputBytes) {
+          : await File(selectedPath!).length();
+      if (inputLength < 0 || inputLength > _maxInputBytes) {
         _fail('Image is too large (maximum 32 MB)');
         return null;
       }
       final originImageBytes = pickedFile != null
-          ? await pickedFile.readAsBytes()
-          : await File(selectedPath).readAsBytes();
+          ? await _readPickedImage(pickedFile)
+          : await File(selectedPath!).readAsBytes();
+      // Some document providers cannot report a size before the file is read.
+      if (originImageBytes == null ||
+          originImageBytes.length > _maxInputBytes) {
+        _fail('Image is too large (maximum 32 MB)');
+        return null;
+      }
 
       BotToast.showText(text: I18n.ofContext().parsing);
       localId ??= await compute(
@@ -178,6 +183,37 @@ abstract class SauceStoreBase with Store {
         LPrinter.d('Reverse image search resolved Pixiv ID locally: $localId');
         BotToast.showText(text: 'Pixiv ID: $localId');
         return _finish([localId], matchedLocally: true);
+      }
+
+      final digest = await compute(computeImageSha256, originImageBytes);
+      final indexedIdentity = await downloadIdentityIndex.findDigest(digest);
+      if (indexedIdentity != null) {
+        localId = indexedIdentity.illustId;
+        LPrinter.d(
+          'Reverse image search resolved Pixiv ID by SHA-256: $localId',
+        );
+        BotToast.showText(text: 'Pixiv ID: $localId');
+        return _finish([localId], matchedLocally: true);
+      }
+      if (completedTask != null) {
+        // Old task rows only prove that PixEz once saved a file with this
+        // name. The gallery file may since have been replaced or edited, so a
+        // name match is never promoted into the exact-byte SHA index.
+        if (context != null && context.mounted) {
+          final accepted = await _confirmHistoricalDownload(
+            context,
+            completedTask,
+          );
+          if (_disposed || !context.mounted) return null;
+          if (accepted) {
+            localId = completedTask.illustId;
+            LPrinter.d(
+              'Reverse image search accepted historical download: $localId',
+            );
+            BotToast.showText(text: 'Pixiv ID: $localId');
+            return _finish([localId], matchedLocally: true);
+          }
+        }
       }
 
       if (context == null || !context.mounted) {
@@ -209,24 +245,47 @@ abstract class SauceStoreBase with Store {
         '${preparedBytes.length}',
       );
 
-      final formData = FormData.fromMap({
-        'dbs[]': '5',
-        'file': MultipartFile.fromBytes(
-          preparedBytes,
-          filename: 'pixez_reverse_search.$preparedExtension',
-        ),
-      });
-      final response = await dio.post<dynamic>('/search.php', data: formData);
-
       phase.value = SauceSearchPhase.parsing;
       BotToast.showText(text: 'SauceNAO · ${I18n.ofContext().parsing}');
-      final responseHtml = switch (response.data) {
-        String value => value,
-        List<int> value => utf8.decode(value, allowMalformed: true),
-        _ => response.data.toString(),
-      };
-      final ids = parseSauceNaoPixivIds(responseHtml);
-      if (ids.isEmpty) {
+      var parsed = await _searchSauceNao(
+        preparedBytes,
+        preparedExtension,
+        pixivOnly: true,
+      );
+      if (parsed.isEmpty) {
+        // One controlled fallback lets mirror/booru cards contribute only
+        // when they contain an explicit Pixiv or pximg source link.
+        LPrinter.d('SauceNAO db5 returned no Pixiv candidate; trying db999');
+        parsed = await _searchSauceNao(
+          preparedBytes,
+          preparedExtension,
+          pixivOnly: false,
+        );
+      }
+
+      if (parsed.exactMatches.isNotEmpty) {
+        return _finish([
+          parsed.exactMatches.first.illustId,
+        ], matchedLocally: false);
+      }
+      if (parsed.possibleMatches.isNotEmpty) {
+        if (!context.mounted) return null;
+        final accepted = await _confirmPossibleMatches(
+          context,
+          parsed.possibleMatches.take(3).toList(growable: false),
+        );
+        if (_disposed || !context.mounted) return null;
+        if (accepted != null) {
+          return _finish([accepted.illustId], matchedLocally: false);
+        }
+        // The user saw a real possible match and declined it. Returning to
+        // idle avoids misreporting that interaction as "0 results".
+        notStart = true;
+        phase.value = SauceSearchPhase.idle;
+        return null;
+      }
+
+      if (parsed.isEmpty) {
         notStart = false;
         phase.value = SauceSearchPhase.noResult;
         final event = const SauceSearchEvent(
@@ -236,7 +295,7 @@ abstract class SauceStoreBase with Store {
         if (!_disposed) _streamController.add(event);
         return event;
       }
-      return _finish(ids, matchedLocally: false);
+      return null;
     } on SauceNaoResponseException catch (error) {
       _fail(error.message);
       return null;
@@ -252,62 +311,188 @@ abstract class SauceStoreBase with Store {
     }
   }
 
-  Future<void> _showAndroidPickerChoice(BuildContext context) async {
-    final skipAlert = Prefer.getBool('photo_picker_type_selected') ?? false;
-    if (skipAlert) return;
+  Future<TaskPersist?> _completedTaskForName(String fileName) async {
+    try {
+      return await fetcher.taskPersistProvider.getCompletedByFileName(fileName);
+    } catch (error, stackTrace) {
+      LPrinter.d('Historical download lookup failed: $error');
+      LPrinter.d(stackTrace);
+      return null;
+    }
+  }
 
-    await showDialog<void>(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          contentPadding: const EdgeInsets.only(top: 10, bottom: 10),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Observer(
-                builder: (context) {
-                  return SwitchListTile(
-                    secondary: const Icon(Icons.photo_album),
-                    onChanged: (value) async {
-                      await userSetting.setImagePickerType(value ? 1 : 0);
-                    },
-                    title: InkWell(
-                      child: Text(I18n.of(context).photo_picker),
-                      onTap: () {
-                        launchUrlLauncher(
-                          'https://developer.android.com/training/data-storage/shared/photopicker',
-                        );
-                      },
+  Future<PlatformFile?> _pickImage() {
+    return FilePicker.pickFile(type: FileType.image);
+  }
+
+  Future<Uint8List?> _readPickedImage(PlatformFile file) async {
+    final builder = BytesBuilder(copy: false);
+    var length = 0;
+    await for (final chunk in file.readAsByteStream()) {
+      length += chunk.length;
+      if (length > _maxInputBytes) return null;
+      builder.add(chunk);
+    }
+    return builder.takeBytes();
+  }
+
+  Future<SauceNaoPixivResults> _searchSauceNao(
+    Uint8List bytes,
+    String extension, {
+    required bool pixivOnly,
+  }) async {
+    final form = <String, dynamic>{
+      if (pixivOnly) 'dbs[]': '5' else 'db': '999',
+      'file': MultipartFile.fromBytes(
+        bytes,
+        filename: 'pixez_reverse_search.$extension',
+      ),
+    };
+    final response = await dio.post<dynamic>(
+      '/search.php',
+      data: FormData.fromMap(form),
+    );
+    final responseHtml = switch (response.data) {
+      String value => value,
+      List<int> value => utf8.decode(value, allowMalformed: true),
+      _ => response.data.toString(),
+    };
+    return parseSauceNaoPixivResults(responseHtml);
+  }
+
+  Future<SauceNaoPixivCandidate?> _confirmPossibleMatches(
+    BuildContext context,
+    List<SauceNaoPixivCandidate> candidates,
+  ) async {
+    final isChinese = Localizations.localeOf(context).languageCode == 'zh';
+    final title = isChinese ? '可能的 Pixiv 匹配' : 'Possible Pixiv match';
+    final message = isChinese
+        ? '相似度未达到自动打开阈值，请选择要打开的候选结果。'
+        : 'Similarity is below the automatic threshold. Choose a candidate.';
+
+    return Platform.isWindows
+        ? await fluent.showDialog<SauceNaoPixivCandidate>(
+            context: context,
+            barrierDismissible: false,
+            builder: (dialogContext) => fluent.ContentDialog(
+              title: Text(title),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(message),
+                  const SizedBox(height: 12),
+                  ...candidates.map(
+                    (candidate) => Padding(
+                      padding: const EdgeInsets.only(top: 6),
+                      child: fluent.Button(
+                        onPressed: () =>
+                            Navigator.of(dialogContext).pop(candidate),
+                        child: Text(
+                          'Pixiv #${candidate.illustId} · '
+                          '${candidate.similarity.toStringAsFixed(1)}%',
+                        ),
+                      ),
                     ),
-                    subtitle: Text(I18n.of(context).photo_picker_subtitle),
-                    value: userSetting.imagePickerType == 1,
-                  );
-                },
-              ),
-              const Divider(),
-              InkWell(
-                child: Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(8),
-                    child: Text(I18n.of(context).ok),
                   ),
+                ],
+              ),
+              actions: [
+                fluent.Button(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: Text(I18n.of(dialogContext).cancel),
                 ),
-                onTap: () => Navigator.of(context).pop(),
+              ],
+            ),
+          )
+        : await showDialog<SauceNaoPixivCandidate>(
+            context: context,
+            barrierDismissible: false,
+            builder: (dialogContext) => AlertDialog(
+              title: Text(title),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(message),
+                  const SizedBox(height: 8),
+                  ...candidates.map(
+                    (candidate) => ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: Text('Pixiv #${candidate.illustId}'),
+                      subtitle: Text(
+                        '${candidate.similarity.toStringAsFixed(1)}%',
+                      ),
+                      trailing: const Icon(Icons.open_in_new),
+                      onTap: () => Navigator.of(dialogContext).pop(candidate),
+                    ),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: Text(I18n.of(dialogContext).cancel),
+                ),
+              ],
+            ),
+          );
+  }
+
+  Future<bool> _confirmHistoricalDownload(
+    BuildContext context,
+    TaskPersist task,
+  ) async {
+    final isChinese = Localizations.localeOf(context).languageCode == 'zh';
+    final title = isChinese ? '发现历史下载记录' : 'Historical download found';
+    final message = isChinese
+        ? '文件名与过去下载的「${task.title}」（Pixiv #${task.illustId}）相同，'
+              '但无法确认图片内容是否被替换或编辑。是否打开该作品？'
+        : 'The file name matches a previous download, "${task.title}" '
+              '(Pixiv #${task.illustId}), but the image bytes cannot be '
+              'verified. Open this work?';
+
+    if (Platform.isWindows) {
+      return await fluent.showDialog<bool>(
+            context: context,
+            barrierDismissible: false,
+            builder: (dialogContext) => fluent.ContentDialog(
+              title: Text(title),
+              content: Text(message),
+              actions: [
+                fluent.Button(
+                  onPressed: () => Navigator.of(dialogContext).pop(false),
+                  child: Text(I18n.of(dialogContext).cancel),
+                ),
+                fluent.FilledButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(true),
+                  child: Text(I18n.of(dialogContext).ok),
+                ),
+              ],
+            ),
+          ) ??
+          false;
+    }
+
+    return await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (dialogContext) => AlertDialog(
+            title: Text(title),
+            content: Text(message),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+                child: Text(I18n.of(dialogContext).cancel),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(dialogContext).pop(true),
+                child: Text(I18n.of(dialogContext).ok),
               ),
             ],
           ),
-        );
-      },
-    );
-    await Prefer.setBool('photo_picker_type_selected', true);
-  }
-
-  Future<XFile?> _pickImage() async {
-    final implementation = ImagePickerPlatform.instance;
-    if (implementation is ImagePickerAndroid) {
-      implementation.useAndroidPhotoPicker = userSetting.imagePickerType == 1;
-    }
-    return ImagePicker().pickImage(source: ImageSource.gallery);
+        ) ??
+        false;
   }
 
   Future<bool> _confirmExternalUpload(BuildContext context) async {
@@ -354,10 +539,6 @@ abstract class SauceStoreBase with Store {
           ),
         ) ??
         false;
-  }
-
-  void launchUrlLauncher(String url) {
-    unawaited(launchUrlString(url));
   }
 
   SauceSearchEvent _finish(Iterable<int> ids, {required bool matchedLocally}) {

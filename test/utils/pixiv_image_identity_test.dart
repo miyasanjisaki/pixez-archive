@@ -101,4 +101,17 @@ void main() {
 
     expect(extractPixivIllustIdsFromText(html), [12345678, 23456789]);
   });
+
+  test('extractPixivPageIndex reads canonical URLs but not custom names', () {
+    expect(
+      extractPixivPageIndex(
+        hints: [
+          'https://i.pximg.net/img-original/img/2026/01/02/03/04/05/'
+              '54321098_p12.jpg',
+        ],
+      ),
+      12,
+    );
+    expect(extractPixivPageIndex(hints: ['custom title.jpg']), isNull);
+  });
 }

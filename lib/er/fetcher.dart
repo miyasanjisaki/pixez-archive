@@ -202,8 +202,7 @@ class Fetcher {
     final targetPort = sendPortToChild;
     if (targetPort == null) return;
 
-    while (queue.isNotEmpty &&
-        urlPool.length < userSetting.maxRunningTask) {
+    while (queue.isNotEmpty && urlPool.length < userSetting.maxRunningTask) {
       TaskBean? first = null;
       for (var i in queue) {
         if (!urlPool.contains(i.url)) {
@@ -265,7 +264,12 @@ class Fetcher {
       }
 
       final uint8list = await file.readAsBytes();
-      final saved = await saveStore.saveToGallery(uint8list, illusts, fileName);
+      final saved = await saveStore.saveToGallery(
+        uint8list,
+        illusts,
+        fileName,
+        sourceUrl: url,
+      );
       if (!saved) {
         await _errorD(url);
         return;
@@ -393,8 +397,9 @@ entryPoint(SendMessage message) async {
             ).absolute;
             final rootPrefix =
                 '${temporaryDirectory.path}${Platform.pathSeparator}';
-            final comparableRoot =
-                Platform.isWindows ? rootPrefix.toLowerCase() : rootPrefix;
+            final comparableRoot = Platform.isWindows
+                ? rootPrefix.toLowerCase()
+                : rootPrefix;
             final comparableTarget = Platform.isWindows
                 ? targetFile.path.toLowerCase()
                 : targetFile.path;

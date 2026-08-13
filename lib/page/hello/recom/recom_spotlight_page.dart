@@ -105,44 +105,28 @@ class _RecomSpolightPageState extends State<RecomSpolightPage>
   }
 
   Widget buildEasyRefresh(BuildContext context) {
-    return Stack(
-      children: [
-        NestedScrollView(
-          headerSliverBuilder: (context, innerBoxIsScrolled) => [
-            SliverAppBar(
-              elevation: 0.0,
-              titleSpacing: 0.0,
-              automaticallyImplyLeading: false,
-              // backgroundColor: Theme.of(context).canvasColor,
-              title: Text(""),
-            ),
-          ],
-          body: ListView(),
-        ),
-        EasyRefresh.builder(
-          controller: _easyRefreshController,
-          callLoadOverOffset: Platform.isIOS ? 2 : 5,
-          header: PixezDefault.header(context),
-          footer: PixezDefault.footer(context),
-          onRefresh: () async {
-            await fetchT();
-          },
-          refreshOnStart: true,
-          onLoad: () async {
-            final success = await _lightingStore.fetchNext();
-            if (!mounted) return;
-            _easyRefreshController.finishLoad(
-              success
-                  ? (_lightingStore.nextUrl?.isNotEmpty == true
-                        ? IndicatorResult.success
-                        : IndicatorResult.noMore)
-                  : IndicatorResult.fail,
-            );
-          },
-          childBuilder: (context, physics) =>
-              Observer(builder: (context) => _buildWaterFall(context, physics)),
-        ),
-      ],
+    return EasyRefresh.builder(
+      controller: _easyRefreshController,
+      callLoadOverOffset: Platform.isIOS ? 2 : 5,
+      header: PixezDefault.header(context),
+      footer: PixezDefault.footer(context),
+      onRefresh: () async {
+        await fetchT();
+      },
+      refreshOnStart: true,
+      onLoad: () async {
+        final success = await _lightingStore.fetchNext();
+        if (!mounted) return;
+        _easyRefreshController.finishLoad(
+          success
+              ? (_lightingStore.nextUrl?.isNotEmpty == true
+                    ? IndicatorResult.success
+                    : IndicatorResult.noMore)
+              : IndicatorResult.fail,
+        );
+      },
+      childBuilder: (context, physics) =>
+          Observer(builder: (context) => _buildWaterFall(context, physics)),
     );
   }
 

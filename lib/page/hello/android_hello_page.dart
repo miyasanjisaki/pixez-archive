@@ -542,6 +542,12 @@ class _AnimatedToggleFullscreenFABState
   }
 
   @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Visibility(
       visible: widget.isFullscreen,

@@ -28,30 +28,32 @@ class TaskPersist {
   int sanityLevel;
   int status;
 
-  TaskPersist(
-      {required this.userName,
-      required this.title,
-      required this.url,
-      required this.userId,
-      required this.illustId,
-      required this.fileName,
-      this.sanityLevel = 0,
-      this.id,
-      this.medium,
-      required this.status});
+  TaskPersist({
+    required this.userName,
+    required this.title,
+    required this.url,
+    required this.userId,
+    required this.illustId,
+    required this.fileName,
+    this.sanityLevel = 0,
+    this.id,
+    this.medium,
+    required this.status,
+  });
 
   factory TaskPersist.fromJson(Map<String, dynamic> json) {
     return TaskPersist(
-        id: json[columnId],
-        userName: json[columnUserName],
-        title: json[columnTitle],
-        url: json[columnUrl],
-        userId: json[columnUserId],
-        sanityLevel: json[columnSanityLevel],
-        illustId: json[columnIllustId],
-        status: json[columnStatus],
-        fileName: json[columnFileName],
-        medium: json[columnMedium]);
+      id: json[columnId],
+      userName: json[columnUserName],
+      title: json[columnTitle],
+      url: json[columnUrl],
+      userId: json[columnUserId],
+      sanityLevel: json[columnSanityLevel],
+      illustId: json[columnIllustId],
+      status: json[columnStatus],
+      fileName: json[columnFileName],
+      medium: json[columnMedium],
+    );
   }
 
   Map<String, dynamic> toJson() {
@@ -71,39 +73,44 @@ class TaskPersist {
 
   Illusts toIllusts() {
     var user2 = User(
-        id: this.userId,
-        name: this.userName,
-        account: '',
-        profileImageUrls: ProfileImageUrls(medium: ''),
-        comment: "",
-        isFollowed: false);
+      id: this.userId,
+      name: this.userName,
+      account: '',
+      profileImageUrls: ProfileImageUrls(medium: ''),
+      comment: "",
+      isFollowed: false,
+    );
     var illusts = Illusts(
-        id: this.illustId,
-        title: this.title,
-        type: 'type',
-        imageUrls:
-            ImageUrls(squareMedium: '', medium: this.medium ?? '', large: ''),
-        caption: 'caption',
-        restrict: 0,
-        user: user2,
-        tags: [],
-        tools: [],
-        createDate: '',
-        pageCount: 0,
-        width: 0,
-        height: 0,
-        sanityLevel: this.sanityLevel,
-        xRestrict: 0,
-        series: null,
-        metaSinglePage: MetaSinglePage(originalImageUrl: ''),
-        metaPages: [],
-        totalView: 0,
-        totalBookmarks: 0,
-        totalComments: 0,
-        isBookmarked: false,
-        visible: false,
-        isMuted: false,
-        illustAIType: 1);
+      id: this.illustId,
+      title: this.title,
+      type: 'type',
+      imageUrls: ImageUrls(
+        squareMedium: '',
+        medium: this.medium ?? '',
+        large: '',
+      ),
+      caption: 'caption',
+      restrict: 0,
+      user: user2,
+      tags: [],
+      tools: [],
+      createDate: '',
+      pageCount: 0,
+      width: 0,
+      height: 0,
+      sanityLevel: this.sanityLevel,
+      xRestrict: 0,
+      series: null,
+      metaSinglePage: MetaSinglePage(originalImageUrl: ''),
+      metaPages: [],
+      totalView: 0,
+      totalBookmarks: 0,
+      totalComments: 0,
+      isBookmarked: false,
+      visible: false,
+      isMuted: false,
+      illustAIType: 1,
+    );
     illusts.user = user2;
     illusts.title = this.title;
     illusts.id = this.illustId;
@@ -124,16 +131,69 @@ final String columnMedium = 'medium';
 final String columnSanityLevel = 'sanity_level';
 final String indexTaskUrl = 'task_url_unique';
 
+/// Normalizes a picker display name or path to the same basename stored by the
+/// download queue. Android content providers may return percent-encoded names
+/// while the queue always stores the original decoded file name.
+String normalizeDownloadedImageName(String value) {
+  var candidate = value.trim();
+  final uri = Uri.tryParse(candidate);
+  if (uri != null) {
+    candidate =
+        uri.queryParameters['displayName'] ??
+        uri.queryParameters['name'] ??
+        (uri.pathSegments.isNotEmpty ? uri.pathSegments.last : candidate);
+  }
+  try {
+    candidate = Uri.decodeComponent(candidate);
+  } on FormatException {
+    // Keep the provider-supplied name if its percent escaping is malformed.
+  }
+  candidate = candidate.replaceAll('\\', '/').split('/').last.trim();
+  return candidate.toLowerCase();
+}
+
+String _withoutCollisionSuffix(String fileName) {
+  return fileName.replaceFirst(RegExp(r'\s+\([0-9]+\)(?=\.[^./\\]+$)'), '');
+}
+
+/// Pure selection helper shared by the database lookup and unit tests.
+TaskPersist? findCompletedDownloadByName(
+  Iterable<TaskPersist> tasks,
+  String pickerName,
+) {
+  final normalized = normalizeDownloadedImageName(pickerName);
+  if (normalized.isEmpty) return null;
+  final withoutSuffix = _withoutCollisionSuffix(normalized);
+  final matches = <TaskPersist>[];
+  for (final task in tasks) {
+    if (task.status != 2 || task.illustId <= 0) continue;
+    final taskName = normalizeDownloadedImageName(task.fileName);
+    if (taskName != normalized && taskName != withoutSuffix) continue;
+    matches.add(task);
+  }
+  if (matches.isEmpty) return null;
+  // A custom format can give two different works the same file name. That is
+  // ambiguous evidence, so defer to exact hash or external search instead of
+  // silently returning whichever task happened to finish last.
+  if (matches.map((task) => task.illustId).toSet().length != 1) return null;
+  matches.sort((a, b) => (b.id ?? -1).compareTo(a.id ?? -1));
+  return matches.first;
+}
+
 class TaskPersistProvider {
   late Database db;
 
   Future open() async {
     String databasesPath = (await getDatabasesPath());
-    String path =
-        join(databasesPath, 'task1.db'); //某个版本出的bug，升级table无法定位问题，只能改了
-    db = await openDatabase(path, version: 3,
-        onCreate: (Database db, int version) async {
-      await db.execute('''
+    String path = join(
+      databasesPath,
+      'task1.db',
+    ); //某个版本出的bug，升级table无法定位问题，只能改了
+    db = await openDatabase(
+      path,
+      version: 3,
+      onCreate: (Database db, int version) async {
+        await db.execute('''
 create table $tableAccount ( 
   $columnId integer primary key autoincrement, 
   $columnTitle text not null,
@@ -147,63 +207,143 @@ create table $tableAccount (
   $columnMedium text
   )
 ''');
-      await db.execute(
-        'CREATE UNIQUE INDEX $indexTaskUrl ON $tableAccount ($columnUrl)',
-      );
-    }, onUpgrade: (Database db, int oldVersion, int newVersion) async {
-      if (oldVersion < 2) {
-        await db.execute('''
+        await db.execute(
+          'CREATE UNIQUE INDEX $indexTaskUrl ON $tableAccount ($columnUrl)',
+        );
+      },
+      onUpgrade: (Database db, int oldVersion, int newVersion) async {
+        if (oldVersion < 2) {
+          await db.execute('''
         ALTER TABLE $tableAccount
   ADD $columnMedium text;
         ''');
-      }
-      if (oldVersion < 3) {
-        // Older versions could enqueue the same URL more than once. Keep the
-        // newest row before enforcing queue identity at the database layer.
-        await db.execute('''
+        }
+        if (oldVersion < 3) {
+          // Older versions could enqueue the same URL more than once. Keep the
+          // newest row before enforcing queue identity at the database layer.
+          await db.execute('''
 DELETE FROM $tableAccount
 WHERE $columnId NOT IN (
   SELECT MAX($columnId) FROM $tableAccount GROUP BY $columnUrl
 )
 ''');
-        await db.execute(
-          'CREATE UNIQUE INDEX $indexTaskUrl ON $tableAccount ($columnUrl)',
-        );
-      }
-    });
+          await db.execute(
+            'CREATE UNIQUE INDEX $indexTaskUrl ON $tableAccount ($columnUrl)',
+          );
+        }
+      },
+    );
   }
 
   Future<TaskPersist> insert(TaskPersist todo) async {
-    todo.id = await db.insert(tableAccount, todo.toJson(),
-        conflictAlgorithm: ConflictAlgorithm.replace);
+    todo.id = await db.insert(
+      tableAccount,
+      todo.toJson(),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
     return todo;
   }
 
   Future<TaskPersist?> getAccount(String id) async {
-    List<Map<String, dynamic>> maps = await db.query(tableAccount,
-        columns: [
-          columnId,
-          columnUserId,
-          columnIllustId,
-          columnFileName,
-          columnTitle,
-          columnSanityLevel,
-          columnUserName,
-          columnUrl,
-          columnStatus,
-          columnMedium
-        ],
-        where: '$columnUrl = ?',
-        whereArgs: [id]);
+    List<Map<String, dynamic>> maps = await db.query(
+      tableAccount,
+      columns: [
+        columnId,
+        columnUserId,
+        columnIllustId,
+        columnFileName,
+        columnTitle,
+        columnSanityLevel,
+        columnUserName,
+        columnUrl,
+        columnStatus,
+        columnMedium,
+      ],
+      where: '$columnUrl = ?',
+      whereArgs: [id],
+    );
     if (maps.length > 0) {
       return TaskPersist.fromJson(maps.first);
     }
     return null;
   }
 
+  /// Resolves gallery files downloaded before the SHA index was introduced.
+  /// Only completed tasks are eligible; queued or failed rows must never be
+  /// treated as proof that the selected file belongs to that illustration.
+  Future<TaskPersist?> getCompletedByFileName(String pickerName) async {
+    final normalized = normalizeDownloadedImageName(pickerName);
+    if (normalized.isEmpty) return null;
+    final candidates = <String>{
+      normalized,
+      _withoutCollisionSuffix(normalized),
+    }.toList(growable: false);
+    final placeholders = List.filled(candidates.length, '?').join(', ');
+    var maps = await db.query(
+      tableAccount,
+      columns: [
+        columnId,
+        columnUserId,
+        columnIllustId,
+        columnTitle,
+        columnUserName,
+        columnUrl,
+        columnFileName,
+        columnSanityLevel,
+        columnStatus,
+        columnMedium,
+      ],
+      where: '$columnStatus = ? AND lower($columnFileName) IN ($placeholders)',
+      whereArgs: <Object>[2, ...candidates],
+      orderBy: '$columnId DESC',
+    );
+    // Some older queue rows contain an author subdirectory. Keep this fallback
+    // bounded to completed tasks sharing the same basename suffix.
+    if (maps.isEmpty) {
+      final suffixPatterns = candidates
+          .expand((candidate) {
+            final escaped = candidate
+                .replaceAll('\\', r'\\')
+                .replaceAll('%', r'\%')
+                .replaceAll('_', r'\_');
+            return <String>['%/$escaped', r'%\' + escaped];
+          })
+          .toList(growable: false);
+      final suffixWhere = List.filled(
+        suffixPatterns.length,
+        "lower($columnFileName) LIKE ? ESCAPE '\\'",
+      ).join(' OR ');
+      maps = await db.query(
+        tableAccount,
+        columns: [
+          columnId,
+          columnUserId,
+          columnIllustId,
+          columnTitle,
+          columnUserName,
+          columnUrl,
+          columnFileName,
+          columnSanityLevel,
+          columnStatus,
+          columnMedium,
+        ],
+        where: '$columnStatus = ? AND ($suffixWhere)',
+        whereArgs: <Object>[2, ...suffixPatterns],
+        orderBy: '$columnId DESC',
+      );
+    }
+    return findCompletedDownloadByName(
+      maps.map(TaskPersist.fromJson),
+      pickerName,
+    );
+  }
+
   Future<int> remove(int id) async {
-    final result =
-        await db.delete(tableAccount, where: '$columnId = ?', whereArgs: [id]);
+    final result = await db.delete(
+      tableAccount,
+      where: '$columnId = ?',
+      whereArgs: [id],
+    );
     return result;
   }
 
@@ -213,8 +353,12 @@ WHERE $columnId NOT IN (
   }
 
   Future<int> update(TaskPersist todo) async {
-    final result = await db.update(tableAccount, todo.toJson(),
-        where: '$columnId = ?', whereArgs: [todo.id]);
+    final result = await db.update(
+      tableAccount,
+      todo.toJson(),
+      where: '$columnId = ?',
+      whereArgs: [todo.id],
+    );
     return result;
   }
 
@@ -231,7 +375,7 @@ WHERE $columnId NOT IN (
         columnFileName,
         columnSanityLevel,
         columnStatus,
-        columnMedium
+        columnMedium,
       ],
       orderBy: "${columnId} ASC",
     );
@@ -240,7 +384,10 @@ WHERE $columnId NOT IN (
   }
 
   Future<List<TaskPersist>> getDownloadTask(
-      int page, int status, bool asc) async {
+    int page,
+    int status,
+    bool asc,
+  ) async {
     final LIMIT = 16;
     List<Map<String, dynamic>> maps = await db.query(
       tableAccount,
@@ -254,7 +401,7 @@ WHERE $columnId NOT IN (
         columnFileName,
         columnSanityLevel,
         columnStatus,
-        columnMedium
+        columnMedium,
       ],
       orderBy: "${columnId} ${asc ? "ASC" : "DESC"}",
       limit: LIMIT,

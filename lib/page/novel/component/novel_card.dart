@@ -58,6 +58,7 @@ class NovelCard extends StatelessWidget {
                       width: 80,
                       height: 112,
                       fit: BoxFit.cover,
+                      optimizeForList: true,
                     ),
                   ),
                 ),

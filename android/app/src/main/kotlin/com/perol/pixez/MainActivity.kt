@@ -31,6 +31,8 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.DocumentsContract
+import android.view.Surface
+import android.view.SurfaceHolder
 import android.webkit.MimeTypeMap
 import android.widget.Toast
 import androidx.core.content.ContextCompat
@@ -50,6 +52,7 @@ import com.perol.pixez.plugin.save
 import com.waynejo.androidndkgif.GifEncoder
 import io.flutter.Log
 import io.flutter.embedding.android.FlutterActivity
+import io.flutter.embedding.android.FlutterSurfaceView
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import kotlinx.coroutines.Dispatchers
@@ -62,6 +65,8 @@ class MainActivity : FlutterActivity() {
     private val CHANNEL = "com.perol.dev/save"
     private val ENCODE_CHANNEL = "samples.flutter.dev/battery"
     private val APP_WIDGET_CHANNEL = "com.perol.dev/app_widget"
+    private val DISPLAY_MODE_CHANNEL = "com.perol.dev/display_mode"
+    private val DISPLAY_MODE_TAG = "PixEzRefreshRate"
     private var saveMode = 0
     private val OPEN_DOCUMENT_TREE_CODE = 190
     private val PICK_IMAGE_FILE = 2
@@ -70,6 +75,31 @@ class MainActivity : FlutterActivity() {
     private var helplessPath: String? = null
     private val SHARED_PREFERENCES_NAME = "FlutterSharedPreferences"
     private lateinit var sharedPreferences: SharedPreferences
+    private var requestedRefreshRate = 0f
+    private var requestedDisplayModeId = 0
+    private var flutterSurfaceView: FlutterSurfaceView? = null
+    private var flutterSurfaceHooked = false
+    private var surfaceFrameRateHintSubmitted = false
+    private var lastRefreshRateReason = "not-requested"
+    private var lastSurfaceFrameRateError: String? = null
+    private val flutterSurfaceCallback = object : SurfaceHolder.Callback {
+        override fun surfaceCreated(holder: SurfaceHolder) {
+            submitAutomaticSurfaceFrameRateHint("surface-created", holder.surface)
+        }
+
+        override fun surfaceChanged(
+            holder: SurfaceHolder,
+            format: Int,
+            width: Int,
+            height: Int
+        ) {
+            submitAutomaticSurfaceFrameRateHint("surface-changed", holder.surface)
+        }
+
+        override fun surfaceDestroyed(holder: SurfaceHolder) {
+            surfaceFrameRateHintSubmitted = false
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         WindowCompat.setDecorFitsSystemWindows(window, false)
@@ -77,6 +107,30 @@ class MainActivity : FlutterActivity() {
             splashScreen.setOnExitAnimationListener { splashScreenView -> splashScreenView.remove() }
         }
         super.onCreate(savedInstanceState)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        reassertWindowRefreshRatePreference("activity-resume")
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) {
+            reassertWindowRefreshRatePreference("window-focus")
+        }
+    }
+
+    override fun onFlutterSurfaceViewCreated(surfaceView: FlutterSurfaceView) {
+        super.onFlutterSurfaceViewCreated(surfaceView)
+        flutterSurfaceView?.holder?.removeCallback(flutterSurfaceCallback)
+        flutterSurfaceView = surfaceView
+        flutterSurfaceHooked = true
+        surfaceView.holder.addCallback(flutterSurfaceCallback)
+        submitAutomaticSurfaceFrameRateHint(
+            "flutter-surface-hooked",
+            surfaceView.holder.surface
+        )
     }
 
     private val savingPools = Collections.synchronizedList(arrayListOf<String>())
@@ -95,6 +149,27 @@ class MainActivity : FlutterActivity() {
         JsEvalPlugin(this).bindChannel(flutterEngine)
         SecurePlugin(this).bindChannel(flutterEngine)
         SupporterPlugin().bindChannel(this, flutterEngine)
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            DISPLAY_MODE_CHANNEL
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "applyRefreshRate" -> {
+                    requestedRefreshRate =
+                        (call.argument<Number>("refreshRate")?.toFloat() ?: 0f)
+                            .coerceAtLeast(0f)
+                    requestedDisplayModeId =
+                        (call.argument<Number>("preferredModeId")?.toInt() ?: 0)
+                            .coerceAtLeast(0)
+                    result.success(applyRefreshRatePreference("dart-request"))
+                }
+
+                "getRefreshRateDiagnostics" ->
+                    result.success(refreshRateDiagnostics("dart-query"))
+
+                else -> result.notImplemented()
+            }
+        }
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             CHANNEL
@@ -371,6 +446,181 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+        flutterSurfaceView?.holder?.removeCallback(flutterSurfaceCallback)
+        flutterSurfaceView = null
+        flutterSurfaceHooked = false
+        super.cleanUpFlutterEngine(flutterEngine)
+    }
+
+    @Suppress("DEPRECATION")
+    private fun currentDisplay() =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            display
+        } else {
+            windowManager.defaultDisplay
+        }
+
+    private fun applyRefreshRatePreference(reason: String): Map<String, Any?> {
+        lastRefreshRateReason = reason
+        surfaceFrameRateHintSubmitted = false
+        lastSurfaceFrameRateError = null
+
+        if (requestedRefreshRate > 0f) {
+            val attributes = window.attributes
+            if (requestedDisplayModeId > 0) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    attributes.preferredDisplayModeId = requestedDisplayModeId
+                }
+                attributes.preferredRefreshRate = 0f
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                // Android 11+ recommends Surface.setFrameRate for render surfaces.
+                // Clear Window mode/rate overrides so they cannot supersede the
+                // Flutter surface compatibility hint.
+                attributes.preferredDisplayModeId = 0
+                attributes.preferredRefreshRate = 0f
+            } else {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    attributes.preferredDisplayModeId = 0
+                }
+                attributes.preferredRefreshRate = requestedRefreshRate
+            }
+            window.attributes = attributes
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                if (requestedDisplayModeId == 0) {
+                    submitAutomaticSurfaceFrameRateHint(
+                        reason,
+                        flutterSurfaceView?.holder?.surface
+                    )
+                } else {
+                    clearAutomaticSurfaceFrameRateHint(
+                        "explicit-mode-selected",
+                        flutterSurfaceView?.holder?.surface
+                    )
+                }
+            }
+        }
+
+        val diagnostics = refreshRateDiagnostics(reason)
+        Log.i(DISPLAY_MODE_TAG, diagnostics.toString())
+        return diagnostics
+    }
+
+    private fun reassertWindowRefreshRatePreference(reason: String) {
+        if (requestedRefreshRate <= 0f) return
+        lastRefreshRateReason = reason
+        val attributes = window.attributes
+        if (requestedDisplayModeId > 0) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                attributes.preferredDisplayModeId = requestedDisplayModeId
+            }
+            attributes.preferredRefreshRate = 0f
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            attributes.preferredDisplayModeId = 0
+            attributes.preferredRefreshRate = 0f
+        } else {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                attributes.preferredDisplayModeId = 0
+            }
+            attributes.preferredRefreshRate = requestedRefreshRate
+        }
+        window.attributes = attributes
+        Log.i(DISPLAY_MODE_TAG, refreshRateDiagnostics(reason).toString())
+    }
+
+    private fun submitAutomaticSurfaceFrameRateHint(reason: String, surface: Surface?) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R ||
+            requestedDisplayModeId != 0 ||
+            requestedRefreshRate <= 0f
+        ) {
+            return
+        }
+        lastRefreshRateReason = reason
+        if (surface?.isValid != true) {
+            surfaceFrameRateHintSubmitted = false
+            lastSurfaceFrameRateError = "Flutter surface unavailable or invalid"
+            return
+        }
+        try {
+            surface.setFrameRate(
+                requestedRefreshRate,
+                Surface.FRAME_RATE_COMPATIBILITY_DEFAULT
+            )
+            // A successful call means Android accepted the compatibility hint;
+            // the compositor may still choose another active refresh rate.
+            surfaceFrameRateHintSubmitted = true
+            lastSurfaceFrameRateError = null
+        } catch (error: Throwable) {
+            surfaceFrameRateHintSubmitted = false
+            lastSurfaceFrameRateError =
+                "${error.javaClass.simpleName}: ${error.message.orEmpty()}"
+        }
+        Log.i(DISPLAY_MODE_TAG, refreshRateDiagnostics(reason).toString())
+    }
+
+    private fun clearAutomaticSurfaceFrameRateHint(reason: String, surface: Surface?) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
+        lastRefreshRateReason = reason
+        if (surface?.isValid != true) {
+            surfaceFrameRateHintSubmitted = false
+            return
+        }
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                surface.clearFrameRate()
+            } else {
+                // clearFrameRate() was added in API 34. Passing 0 on Android
+                // 11-13 clears the earlier Surface frame-rate hint.
+                surface.setFrameRate(0f, Surface.FRAME_RATE_COMPATIBILITY_DEFAULT)
+            }
+            surfaceFrameRateHintSubmitted = false
+            lastSurfaceFrameRateError = null
+        } catch (error: Throwable) {
+            lastSurfaceFrameRateError =
+                "${error.javaClass.simpleName}: ${error.message.orEmpty()}"
+        }
+        Log.i(DISPLAY_MODE_TAG, refreshRateDiagnostics(reason).toString())
+    }
+
+    @Suppress("DEPRECATION")
+    private fun refreshRateDiagnostics(reason: String): Map<String, Any?> {
+        val currentDisplay = currentDisplay()
+        val attributes = window.attributes
+        val activeMode =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) currentDisplay?.mode else null
+        val supportedModes =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                currentDisplay?.supportedModes?.map { mode ->
+                    "${mode.modeId}:${mode.physicalWidth}x${mode.physicalHeight}" +
+                        "@${"%.2f".format(Locale.US, mode.refreshRate)}"
+                } ?: emptyList()
+            } else {
+                emptyList()
+            }
+        return linkedMapOf(
+            "reason" to reason,
+            "lastApplyReason" to lastRefreshRateReason,
+            "sdk" to Build.VERSION.SDK_INT,
+            "requestedRefreshRate" to requestedRefreshRate,
+            "requestedDisplayModeId" to requestedDisplayModeId,
+            "preferredRefreshRate" to attributes.preferredRefreshRate,
+            "preferredDisplayModeId" to if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                attributes.preferredDisplayModeId
+            } else {
+                0
+            },
+            "activeRefreshRate" to (activeMode?.refreshRate ?: currentDisplay?.refreshRate),
+            "activeDisplayModeId" to (activeMode?.modeId ?: 0),
+            "surfaceHooked" to flutterSurfaceHooked,
+            "surfaceAvailable" to (flutterSurfaceView != null),
+            "surfaceValid" to (flutterSurfaceView?.holder?.surface?.isValid == true),
+            "surfaceFrameRateHintSubmitted" to surfaceFrameRateHintSubmitted,
+            "surfaceSetFrameRateError" to lastSurfaceFrameRateError,
+            "supportedModes" to supportedModes
+        )
+    }
+
     private fun refreshAppWidgets() {
         val appWidgetManager = AppWidgetManager.getInstance(this)
         listOf(SquareAppWidget::class.java, IllustCardAppWidget::class.java).forEach { widgetClass ->
@@ -643,4 +893,5 @@ class MainActivity : FlutterActivity() {
             it.write(data)
         }
     }
+
 }

@@ -20,6 +20,7 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:bot_toast/bot_toast.dart';
+import 'package:flutter/foundation.dart' show compute;
 import 'package:flutter/material.dart';
 import 'package:mobx/mobx.dart';
 import 'package:path_provider/path_provider.dart';
@@ -29,11 +30,13 @@ import 'package:pixez/er/toaster.dart';
 import 'package:pixez/i18n.dart';
 import 'package:pixez/js_eval_plugin.dart';
 import 'package:pixez/main.dart';
+import 'package:pixez/models/download_identity_index.dart';
 import 'package:pixez/models/illust.dart';
 import 'package:pixez/models/task_persist.dart';
 import 'package:pixez/page/task/job_page.dart';
 import 'package:pixez/utils/file_name_sanitizer.dart';
 import 'package:pixez/utils/haptic_util.dart';
+import 'package:pixez/utils/pixiv_image_identity.dart';
 
 part 'save_store.g.dart';
 
@@ -284,11 +287,7 @@ abstract class _SaveStoreBase with Store {
     return directory;
   }
 
-  Future<void> _joinQueue(
-    String url,
-    Illusts illusts,
-    String fileName,
-  ) async {
+  Future<void> _joinQueue(String url, Illusts illusts, String fileName) async {
     final result = await fetcher.taskPersistProvider.getAccount(url);
     if (result != null) {
       streamController.add(
@@ -393,15 +392,37 @@ abstract class _SaveStoreBase with Store {
   Future<bool> saveToGallery(
     Uint8List uint8list,
     Illusts illusts,
-    String fileName,
-  ) async {
-    return saveToGalleryWithUser(
+    String fileName, {
+    int? pageIndex,
+    String? sourceUrl,
+  }) async {
+    final saved = await saveToGalleryWithUser(
       uint8list,
       illusts.user.name,
       illusts.user.id,
       illusts.sanityLevel,
       fileName,
     );
+    if (!saved || illusts.id <= 0) return saved;
+
+    try {
+      final digest = await compute(computeImageSha256, uint8list);
+      await downloadIdentityIndex.rememberDigest(
+        sha256: digest,
+        illustId: illusts.id,
+        pageIndex:
+            pageIndex ??
+            extractPixivPageIndex(hints: <String?>[sourceUrl, fileName]) ??
+            0,
+        fileName: fileName,
+      );
+    } catch (error, stackTrace) {
+      // Saving the user's file succeeded; a best-effort search index failure
+      // must not turn the completed download into an error.
+      LPrinter.d('Unable to index downloaded image identity: $error');
+      LPrinter.d(stackTrace);
+    }
+    return saved;
   }
 
   @action

@@ -24,6 +24,11 @@ final RegExp _canonicalPixivFileName = RegExp(
   caseSensitive: false,
 );
 
+final RegExp _canonicalPixivPage = RegExp(
+  r'(?:^|[/\\])[^/\\]*_p([0-9]+)(?:[^0-9]|$)',
+  caseSensitive: false,
+);
+
 /// Extracts Pixiv illustration IDs only from explicit Pixiv URLs, labels, or
 /// canonical Pixiv image file names such as `123456789_p0.jpg`, or an explicit
 /// `Pixiv ID: 123456789` label.
@@ -89,6 +94,29 @@ int? extractPixivIllustId({
 /// Isolate-friendly entry point for inspecting image metadata bytes.
 int? extractPixivIllustIdFromBytes(Uint8List bytes) {
   return extractPixivIllustId(bytes: bytes);
+}
+
+/// Extracts the zero-based page number from a canonical Pixiv image URL or
+/// file name. It deliberately returns `null` for an unlabelled custom name.
+int? extractPixivPageIndex({Iterable<String?> hints = const []}) {
+  for (final hint in hints) {
+    if (hint == null || hint.isEmpty) continue;
+    final variants = <String>[hint];
+    try {
+      final decoded = Uri.decodeFull(hint);
+      if (decoded != hint) variants.add(decoded);
+    } on FormatException {
+      // Keep inspecting the undecoded hint.
+    } on ArgumentError {
+      // Keep inspecting the undecoded hint.
+    }
+    for (final variant in variants) {
+      final match = _canonicalPixivPage.firstMatch(variant);
+      final pageIndex = int.tryParse(match?.group(1) ?? '');
+      if (pageIndex != null) return pageIndex;
+    }
+  }
+  return null;
 }
 
 Iterable<Uint8List> _metadataWindows(Uint8List bytes) sync* {
