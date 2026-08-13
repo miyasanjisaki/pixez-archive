@@ -27,6 +27,7 @@ import 'package:pixez/er/illust_cacher.dart';
 import 'package:pixez/er/pixiv_image_source.dart';
 import 'package:pixez/main.dart';
 import 'package:pixez/network/pixez_network_settings.dart';
+import 'package:pixez/utils/image_decode_size.dart';
 import 'package:rhttp/rhttp.dart' as r;
 
 const ImageHost = "i.pximg.net";
@@ -58,6 +59,10 @@ class PixivImage extends StatefulWidget {
   final String? host;
   final PixEzCacheHeaderData? cacheHeaderData;
 
+  /// Decode list thumbnails near their on-screen physical size and skip
+  /// per-image loading animations. Keep this false for zoomable detail images.
+  final bool optimizeForList;
+
   PixivImage(
     this.url, {
     this.placeWidget,
@@ -68,6 +73,7 @@ class PixivImage extends StatefulWidget {
     this.host,
     this.width,
     this.cacheHeaderData,
+    this.optimizeForList = false,
   });
 
   @override
@@ -162,34 +168,82 @@ class _PixivImageState extends State<PixivImage> {
   @override
   void didUpdateWidget(covariant PixivImage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.url != widget.url) {
-      setState(() {
-        url = widget.url;
-        width = widget.width;
-        height = widget.height;
-      });
+    if (oldWidget.url != widget.url ||
+        oldWidget.width != widget.width ||
+        oldWidget.height != widget.height ||
+        oldWidget.fit != widget.fit ||
+        oldWidget.placeWidget != widget.placeWidget ||
+        oldWidget.fade != widget.fade ||
+        oldWidget.enableMemoryCache != widget.enableMemoryCache ||
+        oldWidget.optimizeForList != widget.optimizeForList) {
+      url = widget.url;
+      width = widget.width;
+      height = widget.height;
+      fit = widget.fit;
+      placeWidget = widget.placeWidget;
+      fade = widget.fade;
+      enableMemoryCache = widget.enableMemoryCache ?? true;
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    if (!widget.optimizeForList) {
+      return _buildCachedImage();
+    }
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final devicePixelRatio = MediaQuery.devicePixelRatioOf(context);
+        final logicalWidth =
+            width ??
+            (constraints.hasBoundedWidth ? constraints.maxWidth : null);
+        final logicalHeight =
+            height ??
+            (constraints.hasBoundedHeight ? constraints.maxHeight : null);
+        final memCacheWidth = calculateImageCacheDimension(
+          logicalWidth,
+          devicePixelRatio,
+          maximumDimension: 1536,
+        );
+        return _buildCachedImage(
+          memCacheWidth: memCacheWidth,
+          // Supplying only one decode dimension preserves the source aspect
+          // ratio. Height is a fallback for the rare width-unbounded layout.
+          memCacheHeight: memCacheWidth == null
+              ? calculateImageCacheDimension(
+                  logicalHeight,
+                  devicePixelRatio,
+                  maximumDimension: 1536,
+                )
+              : null,
+        );
+      },
+    );
+  }
+
+  Widget _buildCachedImage({int? memCacheWidth, int? memCacheHeight}) {
     final size = min(min(width ?? 60, height ?? 60), 60.0);
     return CachedNetworkImage(
-      placeholder: (context, url) =>
-          widget.placeWidget ??
-          Container(
-            height: height,
-            child: Center(
-              child: SizedBox(
-                width: size,
-                height: size,
-                child: const Padding(
-                  padding: const EdgeInsets.all(8.0),
-                  child: const CircularProgressIndicator(),
-                ),
+      placeholder: (context, url) {
+        if (widget.placeWidget != null) return widget.placeWidget!;
+        if (widget.optimizeForList) {
+          return const ColoredBox(color: Color(0x0D808080));
+        }
+        return Container(
+          height: height,
+          child: Center(
+            child: SizedBox(
+              width: size,
+              height: size,
+              child: const Padding(
+                padding: const EdgeInsets.all(8.0),
+                child: const CircularProgressIndicator(),
               ),
             ),
           ),
+        );
+      },
       errorWidget: (context, url, _) => Container(
         height: height,
         child: Center(
@@ -201,9 +255,14 @@ class _PixivImageState extends State<PixivImage> {
           ),
         ),
       ),
-      fadeOutDuration: widget.fade ? const Duration(milliseconds: 1000) : null,
-      // memCacheWidth: width?.toInt(),
-      // memCacheHeight: height?.toInt(),
+      fadeInDuration: widget.optimizeForList
+          ? Duration.zero
+          : const Duration(milliseconds: 500),
+      fadeOutDuration: widget.optimizeForList
+          ? Duration.zero
+          : (widget.fade ? const Duration(milliseconds: 1000) : null),
+      memCacheWidth: memCacheWidth,
+      memCacheHeight: memCacheHeight,
       imageUrl: url,
       cacheManager: pixivCacheManager,
       height: height,

@@ -32,6 +32,7 @@ import 'package:pixez/network/api_client.dart';
 import 'package:pixez/page/hello/recom/recom_user_road.dart';
 import 'package:pixez/page/hello/recom/recom_user_store.dart';
 import 'package:pixez/page/hello/recom/spotlight_store.dart';
+import 'package:pixez/page/picture/illust_store.dart';
 import 'package:pixez/page/soup/soup_page.dart';
 import 'package:pixez/page/spotlight/spotlight_page.dart';
 import 'package:waterfall_flow/waterfall_flow.dart';
@@ -64,25 +65,37 @@ class _RecomSpolightPageState extends State<RecomSpolightPage>
   void initState() {
     _scrollController = ScrollController();
     _easyRefreshController = EasyRefreshController(
-        controlFinishLoad: true, controlFinishRefresh: true);
-    _recomUserStore = RecomUserStore(_easyRefreshController);
+      controlFinishLoad: true,
+      controlFinishRefresh: true,
+    );
+    _recomUserStore = RecomUserStore(null);
     spotlightStore = SpotlightStore(null);
     _lightingStore = LightingStore(
       ApiForceSource(
-          futureGet: (e) => apiClient.getRecommend(), glanceKey: "recom"),
-    )..easyRefreshController = _easyRefreshController;
+        futureGet: (e) => apiClient.getRecommend(),
+        glanceKey: "recom",
+      ),
+    );
     super.initState();
     subscription = topStore.topStream.listen((event) {
-      if (event == "100") {
+      if (event == "100" && _scrollController.hasClients) {
         _scrollController.position.jumpTo(0);
       }
     });
   }
 
   Future<void> fetchT() async {
-    await spotlightStore.fetch();
-    _lightingStore.fetch();
-    _recomUserStore.fetch();
+    final results = await Future.wait<bool>([
+      spotlightStore.fetch(),
+      _lightingStore.fetch(),
+      _recomUserStore.fetch(),
+    ]);
+    if (!mounted) return;
+    _easyRefreshController.finishRefresh(
+      results.every((result) => result)
+          ? IndicatorResult.success
+          : IndicatorResult.fail,
+    );
   }
 
   @override
@@ -90,8 +103,6 @@ class _RecomSpolightPageState extends State<RecomSpolightPage>
     super.build(context);
     return buildEasyRefresh(context);
   }
-
-  bool backToTopVisible = false;
 
   Widget buildEasyRefresh(BuildContext context) {
     return Stack(
@@ -104,7 +115,7 @@ class _RecomSpolightPageState extends State<RecomSpolightPage>
               automaticallyImplyLeading: false,
               // backgroundColor: Theme.of(context).canvasColor,
               title: Text(""),
-            )
+            ),
           ],
           body: ListView(),
         ),
@@ -118,63 +129,67 @@ class _RecomSpolightPageState extends State<RecomSpolightPage>
           },
           refreshOnStart: true,
           onLoad: () async {
-            await _lightingStore.fetchNext();
+            final success = await _lightingStore.fetchNext();
+            if (!mounted) return;
+            _easyRefreshController.finishLoad(
+              success
+                  ? (_lightingStore.nextUrl?.isNotEmpty == true
+                        ? IndicatorResult.success
+                        : IndicatorResult.noMore)
+                  : IndicatorResult.fail,
+            );
           },
-          childBuilder: (context, physics) => Observer(
-            builder: (context) => _buildWaterFall(context, physics),
-          ),
+          childBuilder: (context, physics) =>
+              Observer(builder: (context) => _buildWaterFall(context, physics)),
         ),
       ],
     );
   }
 
   Widget _buildWaterFall(BuildContext context, ScrollPhysics physics) {
-    _lightingStore.iStores
-        .removeWhere((element) => element.illusts!.hateByUser());
-    return NotificationListener<ScrollNotification>(
-      onNotification: (ScrollNotification notification) {
-        ScrollMetrics metrics = notification.metrics;
-        if (backToTopVisible == metrics.atEdge && mounted) {
-          setState(() {
-            backToTopVisible = !backToTopVisible;
-          });
-        }
-        return true;
-      },
-      child: CustomScrollView(
-        controller: _scrollController,
-        physics: physics,
-        slivers: [
-          SliverToBoxAdapter(
-            child: Container(height: MediaQuery.of(context).padding.top),
-          ),
-          SliverToBoxAdapter(
-            child: _buildFirstRow(context),
-          ),
-          SliverToBoxAdapter(
-            child: _buidTagSpotlightRow(context),
-          ),
-          SliverToBoxAdapter(
-            child: _buildSecondRow(context, I18n.of(context).recommend_for_you),
-          ),
-          _buildWaterfall(context, MediaQuery.of(context).orientation)
-        ],
-      ),
+    final visibleStores = _lightingStore.iStores
+        .where((element) => element.illusts?.hateByUser() == false)
+        .toList(growable: false);
+    return CustomScrollView(
+      controller: _scrollController,
+      physics: physics,
+      slivers: [
+        SliverToBoxAdapter(
+          child: Container(height: MediaQuery.of(context).padding.top),
+        ),
+        SliverToBoxAdapter(child: _buildFirstRow(context)),
+        SliverToBoxAdapter(child: _buidTagSpotlightRow(context)),
+        SliverToBoxAdapter(
+          child: _buildSecondRow(context, I18n.of(context).recommend_for_you),
+        ),
+        _buildWaterfall(
+          context,
+          MediaQuery.of(context).orientation,
+          visibleStores,
+        ),
+      ],
     );
   }
 
   int _buildSliderValue(BuildContext context, Orientation orientation) {
-    final currentValue = (orientation == Orientation.portrait
-            ? userSetting.crossAdapterWidth
-            : userSetting.hCrossAdapterWidth)
-        .toDouble();
+    final currentValue =
+        (orientation == Orientation.portrait
+                ? userSetting.crossAdapterWidth
+                : userSetting.hCrossAdapterWidth)
+            .toDouble();
     var nowAdaptWidth = max(currentValue, 50.0);
     nowAdaptWidth = min(nowAdaptWidth, 2160);
-    return max((MediaQuery.of(context).size.width / nowAdaptWidth), 1.0)
-        .toInt();
+    return max(
+      (MediaQuery.of(context).size.width / nowAdaptWidth),
+      1.0,
+    ).toInt();
   }
 
-  Widget _buildWaterfall(BuildContext context, Orientation orientation) {
+  Widget _buildWaterfall(
+    BuildContext context,
+    Orientation orientation,
+    List<IllustStore> visibleStores,
+  ) {
     var count = 2;
     if (userSetting.crossAdapt) {
       count = _buildSliderValue(context, orientation);
@@ -183,58 +198,61 @@ class _RecomSpolightPageState extends State<RecomSpolightPage>
           ? userSetting.crossCount
           : userSetting.hCrossCount;
     }
-    return _lightingStore.iStores.isNotEmpty
+    return visibleStores.isNotEmpty
         ? SliverWaterfallFlow(
             gridDelegate: SliverWaterfallFlowDelegateWithFixedCrossAxisCount(
               crossAxisCount: count,
             ),
-            delegate:
-                SliverChildBuilderDelegate((BuildContext context, int index) {
+            delegate: SliverChildBuilderDelegate((
+              BuildContext context,
+              int index,
+            ) {
               return IllustCard(
                 lightingStore: _lightingStore,
-                store: _lightingStore.iStores[index],
-                iStores: _lightingStore.iStores,
+                store: visibleStores[index],
+                iStores: visibleStores,
+                iStoresProvider: () => _lightingStore.iStores
+                    .where((element) => element.illusts?.hateByUser() == false)
+                    .toList(growable: false),
               );
-            }, childCount: _lightingStore.iStores.length),
+            }, childCount: visibleStores.length),
           )
         : (_lightingStore.errorMessage?.isNotEmpty == true
-            ? SliverToBoxAdapter(
-                child: Container(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.max,
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: <Widget>[
-                      Container(
-                        height: 50,
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.all(8.0),
-                        child: Text(':(',
-                            style: Theme.of(context).textTheme.headlineMedium),
-                      ),
-                      TextButton(
+              ? SliverToBoxAdapter(
+                  child: Container(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.max,
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: <Widget>[
+                        Container(height: 50),
+                        Padding(
+                          padding: const EdgeInsets.all(8.0),
+                          child: Text(
+                            ':(',
+                            style: Theme.of(context).textTheme.headlineMedium,
+                          ),
+                        ),
+                        TextButton(
                           onPressed: () {
                             _lightingStore.fetch(force: true);
                           },
-                          child: Text(I18n.of(context).retry)),
-                      Padding(
+                          child: Text(I18n.of(context).retry),
+                        ),
+                        Padding(
                           padding: const EdgeInsets.all(16.0),
                           child: Text(
                             (_lightingStore.errorMessage?.contains("400") ==
                                     true
                                 ? '${I18n.of(context).error_400_hint}\n ${_lightingStore.errorMessage}'
                                 : '${_lightingStore.errorMessage}'),
-                          ))
-                    ],
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              )
-            : SliverToBoxAdapter(
-                child: Container(
-                  height: 30,
-                ),
-              ));
+                )
+              : SliverToBoxAdapter(child: Container(height: 30)));
   }
 
   Widget _buidTagSpotlightRow(BuildContext context) {
@@ -252,71 +270,80 @@ class _RecomSpolightPageState extends State<RecomSpolightPage>
                   clipBehavior: Clip.antiAlias,
                   margin: EdgeInsets.symmetric(horizontal: 8.0),
                   shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.all(Radius.circular(8.0))),
+                    borderRadius: BorderRadius.all(Radius.circular(8.0)),
+                  ),
                   child: Hero(
                     tag: "spotlight_image_${spotlight.hashCode}",
                     child: Material(
                       color: Colors.transparent,
                       child: InkWell(
                         onTap: () {
-                          Navigator.of(context).push(MaterialPageRoute(
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
                               builder: (BuildContext context) {
-                            return SoupPage(
-                              url: spotlight.articleUrl,
-                              spotlight: spotlight,
-                              heroTag: 'spotlight_image_${spotlight.hashCode}',
-                            );
-                          }));
+                                return SoupPage(
+                                  url: spotlight.articleUrl,
+                                  spotlight: spotlight,
+                                  heroTag:
+                                      'spotlight_image_${spotlight.hashCode}',
+                                );
+                              },
+                            ),
+                          );
                         },
-                        child: Container(
-                            width: expectCardWidget,
-                            height: expectCardHeight,
-                            decoration: BoxDecoration(
-                                image: DecorationImage(
-                                    fit: BoxFit.cover,
-                                    image: PixivProvider.url(
-                                        spotlight.thumbnail))),
-                            child: Container(
-                                child: Align(
-                              alignment: Alignment.bottomCenter,
-                              child: Container(
-                                decoration: BoxDecoration(
+                        child: SizedBox(
+                          width: expectCardWidget,
+                          height: expectCardHeight,
+                          child: Stack(
+                            fit: StackFit.expand,
+                            children: [
+                              PixivImage(
+                                spotlight.thumbnail,
+                                width: expectCardWidget,
+                                height: expectCardHeight,
+                                fit: BoxFit.cover,
+                                optimizeForList: true,
+                              ),
+                              Align(
+                                alignment: Alignment.bottomCenter,
+                                child: Container(
+                                  decoration: BoxDecoration(
                                     gradient: LinearGradient(
-                                  begin: Alignment.topCenter,
-                                  end: Alignment.bottomCenter,
-                                  colors: [
-                                    Colors.black.withValues(alpha: 0.0),
-                                    Colors.black.withValues(alpha: 0.5),
-                                  ],
-                                )),
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 8.0, vertical: 8.0),
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.max,
-                                    children: [
-                                      Expanded(
-                                        child: Text(
-                                          "${spotlight.title}",
-                                          maxLines: 2,
-                                          style: TextStyle(
-                                            color: Colors.white,
-                                            fontSize: 14,
-                                            fontWeight: FontWeight.normal,
-                                            // shadows: [
-                                            //   Shadow(
-                                            //       color: Colors.black,
-                                            //       offset: Offset(0.5, 0.5),
-                                            //       blurRadius: 1.0)
-                                            // ]
+                                      begin: Alignment.topCenter,
+                                      end: Alignment.bottomCenter,
+                                      colors: [
+                                        Colors.black.withValues(alpha: 0.0),
+                                        Colors.black.withValues(alpha: 0.5),
+                                      ],
+                                    ),
+                                  ),
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8.0,
+                                      vertical: 8.0,
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.max,
+                                      children: [
+                                        Expanded(
+                                          child: Text(
+                                            "${spotlight.title}",
+                                            maxLines: 2,
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.normal,
+                                            ),
                                           ),
                                         ),
-                                      ),
-                                    ],
+                                      ],
+                                    ),
                                   ),
                                 ),
                               ),
-                            ))),
+                            ],
+                          ),
+                        ),
                       ),
                     ),
                   ),
@@ -340,9 +367,10 @@ class _RecomSpolightPageState extends State<RecomSpolightPage>
               child: Text(
                 I18n.of(context).spotlight,
                 style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 24.0,
-                    color: Theme.of(context).textTheme.titleLarge!.color),
+                  fontWeight: FontWeight.bold,
+                  fontSize: 24.0,
+                  color: Theme.of(context).textTheme.titleLarge!.color,
+                ),
               ),
               padding: EdgeInsets.only(left: 20.0, bottom: 10.0),
             ),
@@ -354,14 +382,17 @@ class _RecomSpolightPageState extends State<RecomSpolightPage>
                 style: Theme.of(context).textTheme.bodySmall,
               ),
               onPressed: () {
-                Navigator.of(context)
-                    .push(MaterialPageRoute(builder: (BuildContext context) {
-                  return SpotLightPage();
-                }));
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (BuildContext context) {
+                      return SpotLightPage();
+                    },
+                  ),
+                );
               },
             ),
             padding: EdgeInsets.all(8.0),
-          )
+          ),
         ],
       ),
     );
@@ -382,7 +413,7 @@ class _RecomSpolightPageState extends State<RecomSpolightPage>
           ),
           padding: EdgeInsets.only(left: 20.0),
         ),
-        Expanded(child: RecomUserRoad())
+        Expanded(child: RecomUserRoad(recomUserStore: _recomUserStore)),
       ],
     );
   }

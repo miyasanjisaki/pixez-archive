@@ -14,6 +14,8 @@
  *
  */
 
+import 'dart:async';
+
 import 'package:bot_toast/bot_toast.dart';
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter_mobx/flutter_mobx.dart';
@@ -39,6 +41,7 @@ class _SearchSuggestionPageState extends State<SearchSuggestionPage> {
   late TextEditingController _filter;
   late SuggestionStore _suggestionStore;
   late SauceStore _sauceStore;
+  StreamSubscription<SauceSearchEvent>? _sauceSubscription;
   FocusNode focusNode = FocusNode();
   final tagGroup = [];
   bool idV = false;
@@ -47,19 +50,20 @@ class _SearchSuggestionPageState extends State<SearchSuggestionPage> {
   void initState() {
     _suggestionStore = SuggestionStore();
     _sauceStore = SauceStore();
-    _sauceStore.observableStream.listen((event) {
-      if (event != null && _sauceStore.results.isNotEmpty) {
+    _sauceSubscription = _sauceStore.observableStream.listen((event) {
+      if (!mounted) return;
+      if (event.illustIds.isNotEmpty) {
         Leader.push(
           context,
           PageView(
-            children: _sauceStore.results
+            children: event.illustIds
                 .map((element) => IllustLightingPage(id: element))
                 .toList(),
           ),
           icon: const Icon(FluentIcons.picture_library),
           title: Text(I18n.of(context).search),
         );
-      } else {
+      } else if (_sauceStore.phase.value == SauceSearchPhase.noResult) {
         BotToast.showText(text: I18n.ofContext().no_result);
       }
     });
@@ -75,6 +79,7 @@ class _SearchSuggestionPageState extends State<SearchSuggestionPage> {
 
   @override
   void dispose() {
+    _sauceSubscription?.cancel();
     _filter.dispose();
     _sauceStore.dispose();
     super.dispose();
@@ -82,138 +87,150 @@ class _SearchSuggestionPageState extends State<SearchSuggestionPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Observer(builder: (context) {
-      return ScaffoldPage(
-        header: _buildAppBar(context),
-        content: Container(
-          child: Column(
-            children: [
-              Divider(),
-              Expanded(
-                child: CustomScrollView(
-                  slivers: [
-                    SliverToBoxAdapter(
-                      child: Padding(
-                        padding: const EdgeInsets.all(8.0),
-                        child: Wrap(
-                          spacing: 10,
-                          children: [
-                            for (String i in tagGroup)
-                              Button(
-                                child: Text(i),
-                                onPressed: () {
-                                  final start = _filter.text.indexOf(i);
-                                  if (start != -1)
-                                    _filter.selection =
-                                        TextSelection.fromPosition(
-                                      TextPosition(
-                                        offset: start + i.length,
-                                      ),
-                                    );
-                                },
-                              )
-                          ],
+    return Observer(
+      builder: (context) {
+        return ScaffoldPage(
+          header: _buildAppBar(context),
+          content: Container(
+            child: Column(
+              children: [
+                Divider(),
+                Expanded(
+                  child: CustomScrollView(
+                    slivers: [
+                      SliverToBoxAdapter(
+                        child: Padding(
+                          padding: const EdgeInsets.all(8.0),
+                          child: Wrap(
+                            spacing: 10,
+                            children: [
+                              for (String i in tagGroup)
+                                Button(
+                                  child: Text(i),
+                                  onPressed: () {
+                                    final start = _filter.text.indexOf(i);
+                                    if (start != -1)
+                                      _filter.selection =
+                                          TextSelection.fromPosition(
+                                            TextPosition(
+                                              offset: start + i.length,
+                                            ),
+                                          );
+                                  },
+                                ),
+                            ],
+                          ),
                         ),
                       ),
-                    ),
-                    SliverVisibility(
-                      sliver: SliverList(
-                        delegate: SliverChildBuilderDelegate((context, index) {
-                          if (index == 0)
-                            return ListTile(
-                              title: Text(_filter.text),
-                              subtitle: Text(I18n.of(context).illust_id),
-                              onPressed: () {
-                                Leader.push(
-                                  context,
-                                  IllustLightingPage(
-                                    id: int.tryParse(_filter.text)!,
-                                  ),
-                                  icon: const Icon(FluentIcons.picture),
-                                  title: Text(_filter.text),
-                                );
-                              },
-                            );
-                          if (index == 1)
-                            return ListTile(
-                              title: Text(_filter.text),
-                              subtitle: Text(I18n.of(context).painter_id),
-                              onPressed: () {
-                                Leader.push(
-                                  context,
-                                  UsersPage(
-                                    id: int.tryParse(_filter.text)!,
-                                  ),
-                                  icon: const Icon(FluentIcons.picture),
-                                  title: Text(_filter.text),
-                                );
-                              },
-                            );
-                          if (index == 2 && _filter.text.length < 5)
-                            return ListTile(
-                              title: Text(_filter.text),
-                              subtitle: Text("Pixivision Id"),
-                              onPressed: () {
-                                Leader.push(
-                                  context,
-                                  SoupPage(
-                                    url:
-                                        "https://www.pixivision.net/zh/a/${_filter.text.trim()}",
-                                    spotlight: null,
-                                  ),
-                                  icon: const Icon(FluentIcons.picture),
-                                  title: Text(_filter.text),
-                                );
-                              },
-                            );
-                          return ListTile();
-                        }, childCount: 3),
+                      SliverVisibility(
+                        sliver: SliverList(
+                          delegate: SliverChildBuilderDelegate((
+                            context,
+                            index,
+                          ) {
+                            if (index == 0)
+                              return ListTile(
+                                title: Text(_filter.text),
+                                subtitle: Text(I18n.of(context).illust_id),
+                                onPressed: () {
+                                  Leader.push(
+                                    context,
+                                    IllustLightingPage(
+                                      id: int.tryParse(_filter.text)!,
+                                    ),
+                                    icon: const Icon(FluentIcons.picture),
+                                    title: Text(_filter.text),
+                                  );
+                                },
+                              );
+                            if (index == 1)
+                              return ListTile(
+                                title: Text(_filter.text),
+                                subtitle: Text(I18n.of(context).painter_id),
+                                onPressed: () {
+                                  Leader.push(
+                                    context,
+                                    UsersPage(id: int.tryParse(_filter.text)!),
+                                    icon: const Icon(FluentIcons.picture),
+                                    title: Text(_filter.text),
+                                  );
+                                },
+                              );
+                            if (index == 2 && _filter.text.length < 5)
+                              return ListTile(
+                                title: Text(_filter.text),
+                                subtitle: Text("Pixivision Id"),
+                                onPressed: () {
+                                  Leader.push(
+                                    context,
+                                    SoupPage(
+                                      url:
+                                          "https://www.pixivision.net/zh/a/${_filter.text.trim()}",
+                                      spotlight: null,
+                                    ),
+                                    icon: const Icon(FluentIcons.picture),
+                                    title: Text(_filter.text),
+                                  );
+                                },
+                              );
+                            return ListTile();
+                          }, childCount: 3),
+                        ),
+                        visible: idV,
                       ),
-                      visible: idV,
-                    ),
-                    if (_suggestionStore.autoWords != null &&
-                        _suggestionStore.autoWords!.tags.isNotEmpty)
-                      SliverList(
-                        delegate: SliverChildBuilderDelegate((context, index) {
-                          final tags = _suggestionStore.autoWords!.tags;
-                          return ListTile(
-                            onPressed: () {
-                              if (tagGroup.length > 1) {
-                                tagGroup.last = tags[index].name;
-                                var text = tagGroup.join(" ");
-                                _filter.text = text;
-                                _filter.selection = TextSelection.fromPosition(
-                                    TextPosition(offset: text.length));
-                                setState(() {});
-                              } else {
-                                FocusScope.of(context).unfocus();
-                                Leader.push(
-                                  context,
-                                  ResultPage(
-                                    word: tags[index].name,
-                                    translatedName:
-                                        tags[index].translated_name ?? "",
-                                  ),
-                                  icon: Icon(FluentIcons.search),
-                                  title: Text(I18n.of(context).search +
-                                      " " +
-                                      tags[index].name),
-                                );
-                              }
+                      if (_suggestionStore.autoWords != null &&
+                          _suggestionStore.autoWords!.tags.isNotEmpty)
+                        SliverList(
+                          delegate: SliverChildBuilderDelegate(
+                            (context, index) {
+                              final tags = _suggestionStore.autoWords!.tags;
+                              return ListTile(
+                                onPressed: () {
+                                  if (tagGroup.length > 1) {
+                                    tagGroup.last = tags[index].name;
+                                    var text = tagGroup.join(" ");
+                                    _filter.text = text;
+                                    _filter.selection =
+                                        TextSelection.fromPosition(
+                                          TextPosition(offset: text.length),
+                                        );
+                                    setState(() {});
+                                  } else {
+                                    FocusScope.of(context).unfocus();
+                                    Leader.push(
+                                      context,
+                                      ResultPage(
+                                        word: tags[index].name,
+                                        translatedName:
+                                            tags[index].translated_name ?? "",
+                                      ),
+                                      icon: Icon(FluentIcons.search),
+                                      title: Text(
+                                        I18n.of(context).search +
+                                            " " +
+                                            tags[index].name,
+                                      ),
+                                    );
+                                  }
+                                },
+                                title: Text(tags[index].name),
+                                subtitle: Text(
+                                  tags[index].translated_name ?? "",
+                                ),
+                              );
                             },
-                            title: Text(tags[index].name),
-                            subtitle: Text(tags[index].translated_name ?? ""),
-                          );
-                        }, childCount: _suggestionStore.autoWords!.tags.length),
-                      ),
-                  ],
+                            childCount: _suggestionStore.autoWords!.tags.length,
+                          ),
+                        ),
+                    ],
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
-        ),
-      );
-    });
+        );
+      },
+    );
   }
 
   PageHeader _buildAppBar(context) {
@@ -222,35 +239,46 @@ class _SearchSuggestionPageState extends State<SearchSuggestionPage> {
       commandBar: CommandBar(
         primaryItems: [
           CommandBarButton(
-            onPressed: () {
-              _sauceStore.findImage();
-            },
-            icon: Icon(FluentIcons.add_field),
+            onPressed: _sauceStore.phase.value.isBusy
+                ? null
+                : () {
+                    _sauceStore.findImage(context: context);
+                  },
+            icon: _sauceStore.phase.value.isBusy
+                ? const SizedBox.square(
+                    dimension: 18,
+                    child: ProgressRing(strokeWidth: 2.5),
+                  )
+                : const Icon(FluentIcons.add_field),
           ),
           CommandBarButton(
-            icon: Icon(FluentIcons.chrome_close,
-                color: FluentTheme.of(context).typography.body!.color),
+            icon: Icon(
+              FluentIcons.chrome_close,
+              color: FluentTheme.of(context).typography.body!.color,
+            ),
             onPressed: () {
               _filter.clear();
             },
-          )
+          ),
         ],
       ),
     );
   }
 
   TextBox _textField(
-      BuildContext context, TextInputType inputType, FocusNode node) {
+    BuildContext context,
+    TextInputType inputType,
+    FocusNode node,
+  ) {
     return TextBox(
       controller: _filter,
       focusNode: node,
       keyboardType: inputType,
       autofocus: true,
       cursorColor: FluentTheme.of(context).iconTheme.color,
-      style: FluentTheme.of(context)
-          .typography
-          .subtitle!
-          .copyWith(color: FluentTheme.of(context).iconTheme.color),
+      style: FluentTheme.of(context).typography.subtitle!.copyWith(
+        color: FluentTheme.of(context).iconTheme.color,
+      ),
       onTap: () {
         FocusScope.of(context).requestFocus(node);
       },
@@ -283,9 +311,7 @@ class _SearchSuggestionPageState extends State<SearchSuggestionPage> {
         if (word.isEmpty) return;
         Leader.push(
           context,
-          ResultPage(
-            word: word,
-          ),
+          ResultPage(word: word),
           icon: const Icon(FluentIcons.search),
           title: Text(I18n.of(context).search + " " + word),
         );

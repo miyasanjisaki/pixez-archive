@@ -1,5 +1,6 @@
 {
   "about": "About",
+  "archive_maintainer_message": "Maintainer of the PixEz Archive fork",
   "about_picture": "Related illusts",
   "account_change": "Switch account",
   "account_message": "Account info",
@@ -41,9 +42,6 @@
   "display_mode": "Display refresh rate",
   "display_mode_message": "Select refresh rate (experimental)",
   "display_mode_warning": "Do not change it unless your device supports it.",
-  "donate_message": "Thank you!",
-  "donate_title": "Buy me a coffee",
-  "donation": "Buy me a coffee",
   "dont_have_account": "Don't have an account yet?",
   "download_address": "Download link",
   "encode": "Encoding",
@@ -118,7 +116,7 @@
   "partial_match_for_tag": "Tag partial matches",
   "path": "Path",
   "paused": "Paused",
-  "perol_message": "Author of the project. Built with Flutter.",
+  "perol_message": "Author of the upstream PixEz Flutter project",
   "personal": "Personal",
   "pixel": "Resolution",
   "please_note_that": "Notice",
@@ -361,5 +359,7 @@
   "line_spacing": "Line spacing",
   "novel_bookmarks": "Bookmarks",
   "novel_views": "Reads",
-  "novel_likes": "Likes"
+  "novel_likes": "Likes",
+  "reverse_image_external_title": "Continue with SauceNAO?",
+  "reverse_image_external_message": "PixEz could not identify a Pixiv ID locally. Continue only if you agree to upload a resized, metadata-free copy to the third-party SauceNAO service."
 }

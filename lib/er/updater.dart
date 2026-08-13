@@ -1,7 +1,7 @@
 import 'package:dio/dio.dart';
-import 'package:flutter/foundation.dart';
 import 'package:pixez/constants.dart';
 import 'package:pixez/er/lprinter.dart';
+import 'package:pub_semver/pub_semver.dart';
 
 enum Result { yes, no, timeout }
 
@@ -11,36 +11,47 @@ class Updater {
 
   static Future<Result> check() async {
     if (Constants.isGooglePlay) return Result.no;
-    final result = await compute(checkUpdate, "");
-    Updater.result = result;
-    return result;
+    final update = await checkUpdate();
+    result = update.result;
+    latestVersion = update.latestVersion;
+    return update.result;
   }
 }
 
-Future<Result> checkUpdate(String arg) async {
+Future<({Result result, String? latestVersion})> checkUpdate() async {
   LPrinter.d("check for update ============");
   try {
-    Response response =
-        await Dio(BaseOptions(baseUrl: 'https://api.github.com'))
-            .get('/repos/Notsfsssf/pixez-flutter/releases/latest');
-    String tagName = response.data['tag_name'];
-    Updater.latestVersion = tagName;
-    LPrinter.d("tagName:$tagName ");
-    if (tagName != Constants.tagName) {
-      List<String> remoteList = tagName.split(".");
-      List<String> localList = Constants.tagName.split(".");
-      LPrinter.d("r:$remoteList l$localList");
-      if (remoteList.length != localList.length) return Result.yes;
-      for (var i = 0; i < remoteList.length; i++) {
-        int r = int.tryParse(remoteList[i]) ?? 0;
-        int l = int.tryParse(localList[i]) ?? 0;
-        LPrinter.d("r:$r l$l");
-        if (r > l) return Result.yes;
-      }
+    final response = await Dio(
+      BaseOptions(baseUrl: 'https://api.github.com'),
+    ).get('/repos/miyasanjisaki/pixez-archive/releases/latest');
+    final tagName = response.data['tag_name']?.toString();
+    if (tagName == null || tagName.isEmpty) {
+      return (result: Result.timeout, latestVersion: null);
     }
+    LPrinter.d("tagName:$tagName ");
+    final hasUpdate = isRemoteVersionNewer(tagName, Constants.tagName);
+    return (result: hasUpdate ? Result.yes : Result.no, latestVersion: tagName);
   } catch (e) {
-    print(e);
-    return Result.timeout;
+    LPrinter.d('Update check failed: $e');
+    return (result: Result.timeout, latestVersion: null);
   }
-  return Result.no;
+}
+
+bool isRemoteVersionNewer(String remoteTag, String localTag) {
+  try {
+    final remote = Version.parse(_normalizeVersionTag(remoteTag));
+    final local = Version.parse(_normalizeVersionTag(localTag));
+    return remote.compareTo(local) > 0;
+  } on FormatException {
+    return false;
+  }
+}
+
+String _normalizeVersionTag(String tag) {
+  var normalized = tag.trim();
+  if (normalized.isEmpty) return normalized;
+  if (normalized.startsWith('v') || normalized.startsWith('V')) {
+    normalized = normalized.substring(1);
+  }
+  return normalized.split(RegExp(r'\s+')).first;
 }

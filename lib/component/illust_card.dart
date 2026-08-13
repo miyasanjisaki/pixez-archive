@@ -204,6 +204,7 @@ class _IllustCardState extends State<IllustCard> {
             child: PixivImage(
               store.illusts!.imageUrls.squareMedium,
               fit: BoxFit.fitWidth,
+              optimizeForList: true,
             ),
           )
         : NullHero(
@@ -212,6 +213,7 @@ class _IllustCardState extends State<IllustCard> {
               url,
               fit: BoxFit.fitWidth,
               cacheHeaderData: PixEzCacheHeaderData(key: tag, quality: quality),
+              optimizeForList: true,
             ),
           );
   }
@@ -230,10 +232,9 @@ class _IllustCardState extends State<IllustCard> {
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
         side: BorderSide(
-          color: Theme.of(context)
-              .colorScheme
-              .outlineVariant
-              .withValues(alpha: 0.55),
+          color: Theme.of(
+            context,
+          ).colorScheme.outlineVariant.withValues(alpha: 0.55),
         ),
       ),
       child: _buildAnimationWraper(
@@ -541,10 +542,7 @@ class _IllustCardState extends State<IllustCard> {
           padding: const EdgeInsets.all(4),
           child: Container(
             child: Padding(
-              padding: const EdgeInsets.symmetric(
-                vertical: 3,
-                horizontal: 6,
-              ),
+              padding: const EdgeInsets.symmetric(vertical: 3, horizontal: 6),
               child: cardText(),
             ),
             decoration: BoxDecoration(

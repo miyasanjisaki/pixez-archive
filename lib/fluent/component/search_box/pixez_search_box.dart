@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:bot_toast/bot_toast.dart';
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_mobx/flutter_mobx.dart';
 import 'package:pixez/fluent/component/pixez_button.dart';
 import 'package:pixez/fluent/component/pixiv_image.dart';
 import 'package:pixez/er/leader.dart';
@@ -36,10 +37,11 @@ class _PixEzSearchBoxState extends State<StatefulWidget> {
   final TextEditingController _controller = TextEditingController();
   final FocusNode _focusNode = FocusNode();
   bool _loading = false;
+  StreamSubscription<SauceSearchEvent>? _sauceSubscription;
 
   @override
   void initState() {
-    _sauceStore.observableStream.listen(_searchByImage);
+    _sauceSubscription = _sauceStore.observableStream.listen(_searchByImage);
     _focusNode.addListener(() {
       if (!_focusNode.hasFocus) {
         if (_key.currentState?.isOverlayVisible == true)
@@ -57,6 +59,7 @@ class _PixEzSearchBoxState extends State<StatefulWidget> {
 
   @override
   void dispose() {
+    _sauceSubscription?.cancel();
     _focusNode.dispose();
     _controller.dispose();
     _sauceStore.dispose();
@@ -65,6 +68,10 @@ class _PixEzSearchBoxState extends State<StatefulWidget> {
 
   @override
   Widget build(BuildContext context) {
+    return Observer(builder: (context) => _buildSearchBox(context));
+  }
+
+  Widget _buildSearchBox(BuildContext context) {
     Widget widget = AutoSuggestBox<_NextPixEzSearchBoxItemValue>(
       key: _key,
       controller: _controller,
@@ -110,8 +117,15 @@ class _PixEzSearchBoxState extends State<StatefulWidget> {
       return Tooltip(
         message: '以图搜源',
         child: IconButton(
-          icon: const Icon(FluentIcons.image_search),
-          onPressed: _sauceStore.findImage,
+          icon: _sauceStore.phase.value.isBusy
+              ? const SizedBox.square(
+                  dimension: 18,
+                  child: ProgressRing(strokeWidth: 2.5),
+                )
+              : const Icon(FluentIcons.image_search),
+          onPressed: _sauceStore.phase.value.isBusy
+              ? null
+              : () => _sauceStore.findImage(context: context),
         ),
       );
 
@@ -436,8 +450,9 @@ class _PixEzSearchBoxState extends State<StatefulWidget> {
     );
   }
 
-  void _searchByImage(event) {
-    if (event == null || !_sauceStore.results.isNotEmpty) {
+  void _searchByImage(SauceSearchEvent event) {
+    if (!mounted) return;
+    if (event.illustIds.isEmpty) {
       BotToast.showText(text: I18n.ofContext().no_result);
       return;
     }
@@ -445,7 +460,7 @@ class _PixEzSearchBoxState extends State<StatefulWidget> {
     Leader.push(
       context,
       PageView(
-        children: _sauceStore.results
+        children: event.illustIds
             .map((element) => IllustLightingPage(id: element))
             .toList(),
       ),

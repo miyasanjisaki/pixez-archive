@@ -5,8 +5,14 @@ import 'package:pixez/page/search/suggest/search_suggestion_page.dart';
 class SearchBar extends StatelessWidget {
   final VoidCallback? onSaucenao;
   final VoidCallback? onSearch;
+  final bool imageSearchBusy;
 
-  const SearchBar({Key? key, this.onSaucenao, this.onSearch}) : super(key: key);
+  const SearchBar({
+    Key? key,
+    this.onSaucenao,
+    this.onSearch,
+    this.imageSearchBusy = false,
+  }) : super(key: key);
 
   void _openSearch(BuildContext context) {
     final callback = onSearch;
@@ -51,14 +57,18 @@ class SearchBar extends StatelessWidget {
                       padding: const EdgeInsets.symmetric(horizontal: 16),
                       child: Row(
                         children: [
-                          Icon(Icons.search, color: colorScheme.onSurfaceVariant),
+                          Icon(
+                            Icons.search,
+                            color: colorScheme.onSurfaceVariant,
+                          ),
                           const SizedBox(width: 12),
                           Expanded(
                             child: Text(
                               searchHint,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                              style: Theme.of(context).textTheme.titleMedium
+                                  ?.copyWith(
                                     color: colorScheme.onSurfaceVariant,
                                   ),
                             ),
@@ -71,8 +81,13 @@ class SearchBar extends StatelessWidget {
               ),
               IconButton(
                 tooltip: I18n.of(context).image_search,
-                icon: const Icon(Icons.image_search_outlined),
-                onPressed: onSaucenao,
+                icon: imageSearchBusy
+                    ? const SizedBox.square(
+                        dimension: 22,
+                        child: CircularProgressIndicator(strokeWidth: 2.5),
+                      )
+                    : const Icon(Icons.image_search_outlined),
+                onPressed: imageSearchBusy ? null : onSaucenao,
               ),
               const SizedBox(width: 4),
             ],

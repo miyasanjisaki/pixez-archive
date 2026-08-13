@@ -1,5 +1,6 @@
 {
   "about": "关于",
+  "archive_maintainer_message": "PixEz Archive 分支维护者",
   "about_picture": "相关图片",
   "account_change": "账号切换",
   "account_message": "账户信息",
@@ -41,9 +42,6 @@
   "display_mode": "显示模式",
   "display_mode_message": "选择支持的显示模式（实验性）",
   "display_mode_warning": "意在解决部分支持高刷新率机型白名单机制的问题。如果没有问题，请不要随意改动！若出现任何问题，请清除应用数据",
-  "donate_message": "支持一下开发者吧！",
-  "donate_title": "如果你觉得这个应用还不错",
-  "donation": "捐赠",
   "dont_have_account": "没有账号？",
   "download_address": "下载地址",
   "encode": "合成",
@@ -118,7 +116,7 @@
   "partial_match_for_tag": "与标签部分一致",
   "path": "路径",
   "paused": "已暂停",
-  "perol_message": "使用 Flutter 开发",
+  "perol_message": "上游 PixEz Flutter 项目原作者",
   "personal": "个人",
   "pixel": "分辨率",
   "please_note_that": "请注意",
@@ -361,5 +359,7 @@
   "line_spacing": "行距",
   "novel_bookmarks": "收藏数",
   "novel_views": "阅读数",
-  "novel_likes": "点赞"
+  "novel_likes": "点赞",
+  "reverse_image_external_title": "继续使用 SauceNAO？",
+  "reverse_image_external_message": "PixEz 未能在本地识别出 Pixiv 作品 ID。仅在您同意将去除元数据并缩小后的图片副本上传到第三方 SauceNAO 服务时继续。"
 }

@@ -42,9 +42,7 @@ class WaterFallLoading extends StatefulWidget {
 class _WaterFallLoadingState extends State<WaterFallLoading> {
   @override
   Widget build(BuildContext context) {
-    return Container(
-      child: Center(child: CircularProgressIndicator()),
-    );
+    return Container(child: Center(child: CircularProgressIndicator()));
   }
 }
 
@@ -59,18 +57,18 @@ class LightingList extends StatefulWidget {
   final Comparator<Illusts>? comparator;
   final bool showStats;
 
-  const LightingList(
-      {Key? key,
-      required this.source,
-      this.header,
-      this.isNested,
-      this.scrollController,
-      this.portal,
-      this.ai,
-      this.filter,
-      this.comparator,
-      this.showStats = false})
-      : super(key: key);
+  const LightingList({
+    Key? key,
+    required this.source,
+    this.header,
+    this.isNested,
+    this.scrollController,
+    this.portal,
+    this.ai,
+    this.filter,
+    this.comparator,
+    this.showStats = false,
+  }) : super(key: key);
 
   @override
   _LightingListState createState() => _LightingListState();
@@ -110,10 +108,10 @@ class _LightingListState extends State<LightingList> {
     _isNested = widget.isNested ?? false;
     _scrollController = widget.scrollController ?? ScrollController();
     _refreshController = EasyRefreshController(
-        controlFinishLoad: true, controlFinishRefresh: true);
-    _store = LightingStore(
-      widget.source,
+      controlFinishLoad: true,
+      controlFinishRefresh: true,
     );
+    _store = LightingStore(widget.source);
     _store.easyRefreshController = _refreshController;
     super.initState();
     _store.fetch();
@@ -129,58 +127,48 @@ class _LightingListState extends State<LightingList> {
     super.dispose();
   }
 
-  bool backToTopVisible = false;
   bool _loadingFilteredPage = false;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      child: Observer(builder: (_) {
-        return Container(child: _buildContent(context));
-      }),
+      child: Observer(
+        builder: (_) {
+          return Container(child: _buildContent(context));
+        },
+      ),
     );
   }
 
   late EasyRefreshController _refreshController;
 
   Widget _buildWithoutHeader(
-      BuildContext context, List<IllustStore> visibleStores) {
-    return NotificationListener<ScrollNotification>(
-        onNotification: (ScrollNotification notification) {
-          if (widget.isNested == true) {
-            return true;
-          }
-          ScrollMetrics metrics = notification.metrics;
-          if (backToTopVisible == metrics.atEdge && mounted) {
-            setState(() {
-              backToTopVisible = !backToTopVisible;
-            });
-          }
-          return true;
+    BuildContext context,
+    List<IllustStore> visibleStores,
+  ) {
+    return EasyRefresh.builder(
+      controller: _refreshController,
+      header: PixezDefault.header(context),
+      footer: PixezDefault.footer(context),
+      scrollController: _scrollController,
+      onRefresh: () {
+        _store.fetch(force: true);
+      },
+      onLoad: () {
+        _store.fetchNext();
+      },
+      childBuilder: (context, physics) => WaterfallFlow.builder(
+        physics: physics,
+        controller: widget.isNested ?? false ? null : _scrollController,
+        padding: EdgeInsets.all(5.0),
+        itemCount: visibleStores.length + (_canManuallyLoadMore ? 1 : 0),
+        itemBuilder: (context, index) {
+          if (index == visibleStores.length) return _buildLoadMoreButton();
+          return _buildItem(index, visibleStores);
         },
-        child: EasyRefresh.builder(
-          controller: _refreshController,
-          header: PixezDefault.header(context),
-          footer: PixezDefault.footer(context),
-          scrollController: _scrollController,
-          onRefresh: () {
-            _store.fetch(force: true);
-          },
-          onLoad: () {
-            _store.fetchNext();
-          },
-          childBuilder: (context, physics) => WaterfallFlow.builder(
-            physics: physics,
-            controller: widget.isNested ?? false ? null : _scrollController,
-            padding: EdgeInsets.all(5.0),
-            itemCount: visibleStores.length + (_canManuallyLoadMore ? 1 : 0),
-            itemBuilder: (context, index) {
-              if (index == visibleStores.length) return _buildLoadMoreButton();
-              return _buildItem(index, visibleStores);
-            },
-            gridDelegate: _buildGridDelegate(),
-          ),
-        ));
+        gridDelegate: _buildGridDelegate(),
+      ),
+    );
   }
 
   bool needToBan(Illusts illust) {
@@ -236,8 +224,9 @@ class _LightingListState extends State<LightingList> {
           Text(I18n.of(context).no_result),
           if (canLoadMore)
             TextButton(
-              onPressed:
-                  _loadingFilteredPage ? null : _loadMoreForFilteredResults,
+              onPressed: _loadingFilteredPage
+                  ? null
+                  : _loadMoreForFilteredResults,
               child: _buildLoadMoreButtonContent(),
             ),
         ],
@@ -292,24 +281,21 @@ class _LightingListState extends State<LightingList> {
         mainAxisAlignment: MainAxisAlignment.center,
         crossAxisAlignment: CrossAxisAlignment.center,
         children: <Widget>[
-          Container(
-            height: 50,
-          ),
+          Container(height: 50),
           Padding(
             padding: const EdgeInsets.all(8.0),
-            child:
-                Text(':(', style: Theme.of(context).textTheme.headlineMedium),
+            child: Text(
+              ':(',
+              style: Theme.of(context).textTheme.headlineMedium,
+            ),
           ),
           TextButton(
-              onPressed: () {
-                _store.fetch(force: true);
-              },
-              child: Text(I18n.of(context).retry)),
-          Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Text(
-                errorText,
-              ))
+            onPressed: () {
+              _store.fetch(force: true);
+            },
+            child: Text(I18n.of(context).retry),
+          ),
+          Padding(padding: const EdgeInsets.all(16.0), child: Text(errorText)),
         ],
       ),
     );
@@ -324,52 +310,44 @@ class _LightingListState extends State<LightingList> {
   }
 
   Widget _buildWithHeader(
-      BuildContext context, List<IllustStore> visibleStores) {
-    return NotificationListener<ScrollNotification>(
-      onNotification: (ScrollNotification notification) {
-        ScrollMetrics metrics = notification.metrics;
-        if (backToTopVisible == metrics.atEdge && mounted) {
-          setState(() {
-            backToTopVisible = !backToTopVisible;
-          });
-        }
-        return true;
+    BuildContext context,
+    List<IllustStore> visibleStores,
+  ) {
+    return EasyRefresh.builder(
+      controller: _refreshController,
+      scrollController: _scrollController,
+      header: PixezDefault.header(context),
+      footer: PixezDefault.footer(context, position: IndicatorPosition.locator),
+      onRefresh: () {
+        _store.fetch(force: true);
       },
-      child: EasyRefresh.builder(
-        controller: _refreshController,
-        scrollController: _scrollController,
-        header: PixezDefault.header(context),
-        footer:
-            PixezDefault.footer(context, position: IndicatorPosition.locator),
-        onRefresh: () {
-          _store.fetch(force: true);
-        },
-        onLoad: () {
-          _store.fetchNext();
-        },
-        childBuilder: ((context, physics) {
-          return CustomScrollView(
-            physics: physics,
-            controller: widget.isNested ?? false ? null : _scrollController,
-            slivers: [
-              SliverToBoxAdapter(
-                child: Container(child: widget.header),
+      onLoad: () {
+        _store.fetchNext();
+      },
+      childBuilder: ((context, physics) {
+        return CustomScrollView(
+          physics: physics,
+          controller: widget.isNested ?? false ? null : _scrollController,
+          slivers: [
+            SliverToBoxAdapter(child: Container(child: widget.header)),
+            SliverWaterfallFlow(
+              gridDelegate: _buildGridDelegate(),
+              delegate: _buildSliverChildBuilderDelegate(
+                context,
+                visibleStores,
               ),
-              SliverWaterfallFlow(
-                gridDelegate: _buildGridDelegate(),
-                delegate:
-                    _buildSliverChildBuilderDelegate(context, visibleStores),
-              ),
-              const FooterLocator.sliver(),
-            ],
-          );
-        }),
-      ),
+            ),
+            const FooterLocator.sliver(),
+          ],
+        );
+      }),
     );
   }
 
   SliverChildBuilderDelegate _buildSliverChildBuilderDelegate(
-      BuildContext context, List<IllustStore> visibleStores) {
+    BuildContext context,
+    List<IllustStore> visibleStores,
+  ) {
     return SliverChildBuilderDelegate((BuildContext context, int index) {
       if (index == visibleStores.length) return _buildLoadMoreButton();
       return IllustCard(
