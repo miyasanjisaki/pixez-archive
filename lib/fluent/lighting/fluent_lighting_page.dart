@@ -56,6 +56,7 @@ class LightingList extends StatefulWidget {
   final String? portal;
   final bool Function(Illusts)? filter;
   final Comparator<Illusts>? comparator;
+  final bool showStats;
 
   const LightingList(
       {Key? key,
@@ -65,7 +66,8 @@ class LightingList extends StatefulWidget {
       this.scrollController,
       this.portal,
       this.filter,
-      this.comparator})
+      this.comparator,
+      this.showStats = false})
       : super(key: key);
 
   @override
@@ -366,6 +368,7 @@ class _LightingListState extends State<LightingList> {
         lightingStore: _store,
         iStores: visibleStores,
         iStoresProvider: _visibleStores,
+        showStats: widget.showStats || widget.comparator != null,
       );
     }, childCount: visibleStores.length + (_canManuallyLoadMore ? 1 : 0));
   }
@@ -403,6 +406,7 @@ class _LightingListState extends State<LightingList> {
       lightingStore: _store,
       iStores: visibleStores,
       iStoresProvider: _visibleStores,
+      showStats: widget.showStats || widget.comparator != null,
     );
   }
 }

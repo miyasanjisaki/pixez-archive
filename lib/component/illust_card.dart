@@ -164,9 +164,14 @@ class _IllustCardState extends State<IllustCard> {
   }
 
   Widget cardText() {
+    if (store.illusts!.type == 'manga') {
+      return Text(
+        '${I18n.of(context).manga} · ${store.illusts!.pageCount}',
+        style: const TextStyle(color: Colors.white),
+      );
+    }
     if (store.illusts!.type != "illust") {
       final typeLabel = switch (store.illusts!.type) {
-        'manga' => I18n.of(context).manga,
         'ugoira' => I18n.of(context).ugoira_filter,
         final type => type,
       };
@@ -332,7 +337,7 @@ class _IllustCardState extends State<IllustCard> {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.favorite, size: 13, color: Colors.white),
+            const Icon(Icons.bookmark, size: 13, color: Colors.white),
             const SizedBox(width: 3),
             Text(
               bookmarks,

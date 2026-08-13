@@ -24,7 +24,7 @@ env:
 
 jobs:
   build:
-    name: Build Android Debug APK
+    name: Build Android Release-mode Test APK
     runs-on: ubuntu-24.04
     timeout-minutes: 90
 
@@ -157,12 +157,82 @@ jobs:
           $PSNativeCommandUseErrorActionPreference = $true
           flutter test --no-pub
 
-      - name: 构建 Debug APK
+      - name: 构建 Release 模式测试签名 APK
+        shell: pwsh
+        env:
+          PIXEZ_TEST_SIGN_RELEASE: "true"
+          PIXEZ_TEST_KEYSTORE_BASE64: ${{ secrets.PIXEZ_TEST_KEYSTORE_BASE64 }}
+          PIXEZ_TEST_KEYSTORE_PASSWORD: ${{ secrets.PIXEZ_TEST_KEYSTORE_PASSWORD }}
+          PIXEZ_TEST_KEY_ALIAS: ${{ secrets.PIXEZ_TEST_KEY_ALIAS }}
+          PIXEZ_TEST_KEY_PASSWORD: ${{ secrets.PIXEZ_TEST_KEY_PASSWORD }}
+        run: |-
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+
+          $requiredSecrets = @(
+            'PIXEZ_TEST_KEYSTORE_BASE64'
+            'PIXEZ_TEST_KEYSTORE_PASSWORD'
+            'PIXEZ_TEST_KEY_ALIAS'
+            'PIXEZ_TEST_KEY_PASSWORD'
+          )
+          foreach ($secretName in $requiredSecrets) {
+            if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($secretName))) {
+              throw "Required repository secret is missing: $secretName"
+            }
+          }
+
+          $keystorePath = Join-Path $env:RUNNER_TEMP 'pixez-ci-test.p12'
+          [IO.File]::WriteAllBytes(
+            $keystorePath,
+            [Convert]::FromBase64String($env:PIXEZ_TEST_KEYSTORE_BASE64)
+          )
+          @"
+          storePassword=$env:PIXEZ_TEST_KEYSTORE_PASSWORD
+          keyPassword=$env:PIXEZ_TEST_KEY_PASSWORD
+          keyAlias=$env:PIXEZ_TEST_KEY_ALIAS
+          storeFile=$($keystorePath -replace '\\', '/')
+          "@ | Set-Content -LiteralPath 'android/key.properties' -Encoding utf8NoBOM
+
+          flutter build apk --release --no-pub
+
+      - name: 验证 APK 对齐和测试签名
         shell: pwsh
         run: |-
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
-          flutter build apk --debug --no-pub
+
+          $sdkRoot = if ($env:ANDROID_SDK_ROOT) {
+            $env:ANDROID_SDK_ROOT
+          } elseif ($env:ANDROID_HOME) {
+            $env:ANDROID_HOME
+          } else {
+            throw 'ANDROID_SDK_ROOT and ANDROID_HOME are both unset.'
+          }
+          $buildTools = Join-Path $sdkRoot 'build-tools/37.0.0'
+          $apksigner = Join-Path $buildTools 'apksigner'
+          $zipalign = Join-Path $buildTools 'zipalign'
+          foreach ($tool in @($apksigner, $zipalign)) {
+            if (-not (Test-Path -LiteralPath $tool -PathType Leaf)) {
+              throw "Android build tool was not found: $tool"
+            }
+          }
+
+          $apkDirectory = Join-Path $PWD 'build/app/outputs/flutter-apk'
+          $apkFiles = @(Get-ChildItem -LiteralPath $apkDirectory -Filter '*-release.apk' -File)
+          if ($apkFiles.Count -eq 0) {
+            throw "No release-mode APK files were found in $apkDirectory."
+          }
+          foreach ($apkFile in $apkFiles) {
+            & $zipalign -c -P 16 4 $apkFile.FullName
+            $signatureReport = (& $apksigner verify --verbose --print-certs $apkFile.FullName) -join "`n"
+            if ($signatureReport -notmatch 'CN=PixEz Archive CI Test') {
+              throw "APK is not signed by the expected CI test key: $($apkFile.Name)"
+            }
+            if ($signatureReport -notmatch '350f39370cb67176c30c16e8d39653ea7b57929b187e55edaff9dd0cb55a9707') {
+              throw "APK test signer fingerprint is unexpected: $($apkFile.Name)"
+            }
+            $signatureReport
+          }
 
       - name: 生成 APK SHA-256
         shell: pwsh
@@ -190,7 +260,9 @@ jobs:
           $checksumLines |
             Set-Content -LiteralPath $checksumFile -Encoding utf8NoBOM
 
-          '### Android Debug APK SHA-256' |
+          '### Android release-mode test APK SHA-256' |
+            Out-File -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          '> These AOT APKs use the persistent PixEz CI test certificate for installable performance testing only.' |
             Out-File -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
           '```text' |
             Out-File -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
@@ -202,7 +274,7 @@ jobs:
       - name: 上传 APK 和校验和
         uses: actions/upload-artifact@v7
         with:
-          name: android-debug-apk
+          name: android-release-mode-test-apk
           path: |-
             build/app/outputs/flutter-apk/*.apk
             build/app/outputs/flutter-apk/SHA256SUMS.txt
@@ -212,9 +284,9 @@ jobs:
       - name: 单独上传 ARM64 APK
         uses: actions/upload-artifact@v7
         with:
-          name: android-arm64-debug-apk
+          name: android-arm64-release-mode-test-apk
           path: |-
-            build/app/outputs/flutter-apk/app-arm64-v8a-debug.apk
+            build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
             build/app/outputs/flutter-apk/SHA256SUMS.txt
           if-no-files-found: error
           compression-level: 0

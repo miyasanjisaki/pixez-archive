@@ -100,6 +100,9 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         _appState = state;
       });
     }
+    if (Platform.isAndroid && state == AppLifecycleState.resumed) {
+      unawaited(userSetting.applyPreferredDisplayMode());
+    }
   }
 
   @override
@@ -108,7 +111,9 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     topStore.dispose();
     fetcher.stop();
     subscription.cancel();
-    if (Platform.isIOS) WidgetsBinding.instance.removeObserver(this);
+    if (Platform.isIOS || Platform.isAndroid) {
+      WidgetsBinding.instance.removeObserver(this);
+    }
     super.dispose();
   }
 
@@ -128,7 +133,9 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     muteStore.init();
 
     super.initState();
-    if (Platform.isIOS) WidgetsBinding.instance.addObserver(this);
+    if (Platform.isIOS || Platform.isAndroid) {
+      WidgetsBinding.instance.addObserver(this);
+    }
     Future.delayed(Duration.zero, () {
       SingleInstancePlugin.argsParser(widget.arguments);
     });

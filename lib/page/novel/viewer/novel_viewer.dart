@@ -59,6 +59,8 @@ class NovelViewerPage extends StatefulWidget {
 }
 
 class _NovelViewerPageState extends State<NovelViewerPage> {
+  static const int _restoreFrameLimit = 8;
+
   ScrollController? _controller;
   late NovelStore _novelStore;
   ReactionDisposer? _offsetDisposer;
@@ -66,6 +68,9 @@ class _NovelViewerPageState extends State<NovelViewerPage> {
   final ValueNotifier<double> _readingProgress = ValueNotifier(0);
   double? _pendingLayoutProgress;
   bool _layoutRestoreScheduled = false;
+  bool _suppressAutomaticPositionSave = false;
+  bool _positionRestorePending = false;
+  int _positionRestoreGeneration = 0;
   bool supportTranslate = false;
   String _selectedText = "";
   NovelSpansGenerator novelSpansGenerator = NovelSpansGenerator();
@@ -82,6 +87,7 @@ class _NovelViewerPageState extends State<NovelViewerPage> {
 
   @override
   void initState() {
+    super.initState();
     _novelStore = widget.novelStore ?? NovelStore(widget.id, null);
     _offsetDisposer = reaction(
       (_) => (
@@ -90,31 +96,34 @@ class _NovelViewerPageState extends State<NovelViewerPage> {
         _novelStore.bookedProgress,
       ),
       (savedPosition) {
-        if (!savedPosition.$1) return;
+        if (!savedPosition.$1) {
+          _positionRestorePending = false;
+          _positionRestoreGeneration++;
+          return;
+        }
+        _suppressAutomaticPositionSave = false;
         LPrinter.d("jump to ${savedPosition.$2} progress=${savedPosition.$3}");
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          final controller = _controller;
-          if (!mounted || controller == null || !controller.hasClients) return;
-          final targetOffset = savedPosition.$3 == null
-              ? savedPosition.$2
-              : controller.position.maxScrollExtent * savedPosition.$3!;
-          final target = targetOffset.clamp(
-            controller.position.minScrollExtent,
-            controller.position.maxScrollExtent,
+        _scheduleSavedPositionRestore(
+          savedOffset: savedPosition.$2,
+          savedProgress: savedPosition.$3,
           );
-          controller.jumpTo(target.toDouble());
-        });
       },
     );
     _novelStore.fetch();
-    super.initState();
     initMethod();
   }
 
   @override
   void dispose() {
     _offsetDisposer?.call();
-    if (_novelStore.positionBooked) {
+    final controller = _controller;
+    if (shouldAutomaticallyPersistNovelPosition(
+      automaticSaveSuppressed: _suppressAutomaticPositionSave,
+      positionLoadComplete: _novelStore.positionLoadComplete,
+      restorePending: _positionRestorePending,
+      hasScrollClients: controller?.hasClients ?? false,
+    )) {
+      _handleScroll();
       _novelStore.bookPosition(_localOffset, progress: _readingProgress.value);
     }
     _controller?.dispose();
@@ -145,6 +154,12 @@ class _NovelViewerPageState extends State<NovelViewerPage> {
               initialScrollOffset: _novelStore.bookedOffset,
             );
             _controller?.addListener(_handleScroll);
+            if (_novelStore.positionBooked) {
+              _scheduleSavedPositionRestore(
+                savedOffset: _novelStore.bookedOffset,
+                savedProgress: _novelStore.bookedProgress,
+              );
+            }
           }
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted) _handleScroll();
@@ -173,6 +188,43 @@ class _NovelViewerPageState extends State<NovelViewerPage> {
     if ((progress - _readingProgress.value).abs() >= 0.001) {
       _readingProgress.value = progress;
     }
+  }
+
+  void _scheduleSavedPositionRestore({
+    required double savedOffset,
+    required double? savedProgress,
+  }) {
+    _positionRestorePending = true;
+    final generation = ++_positionRestoreGeneration;
+    var remainingFrames = _restoreFrameLimit;
+
+    void restoreAfterLayout(Duration _) {
+      if (!mounted || generation != _positionRestoreGeneration) return;
+      final controller = _controller;
+      if (controller == null || !controller.hasClients) {
+        if (--remainingFrames > 0) {
+          WidgetsBinding.instance.addPostFrameCallback(restoreAfterLayout);
+        }
+        return;
+      }
+      final target = calculateNovelRestoreOffset(
+        savedOffset: savedOffset,
+        savedProgress: savedProgress,
+        minScrollExtent: controller.position.minScrollExtent,
+        maxScrollExtent: controller.position.maxScrollExtent,
+      );
+      if ((controller.offset - target).abs() >= 0.5) {
+        controller.jumpTo(target);
+      }
+      _handleScroll();
+      if (savedProgress != null && --remainingFrames > 0) {
+        WidgetsBinding.instance.addPostFrameCallback(restoreAfterLayout);
+      } else {
+        _positionRestorePending = false;
+      }
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback(restoreAfterLayout);
   }
 
   void _preserveProgressForLayoutChange(VoidCallback change) {
@@ -291,13 +343,18 @@ class _NovelViewerPageState extends State<NovelViewerPage> {
               ? I18n.of(context).clear_reading_position
               : I18n.of(context).save_reading_position,
           onPressed: () {
-            if (_novelStore.positionBooked)
+            if (_novelStore.positionBooked) {
+              _suppressAutomaticPositionSave = true;
+              _positionRestorePending = false;
+              _positionRestoreGeneration++;
               _novelStore.deleteBookPosition();
-            else
+            } else {
+              _suppressAutomaticPositionSave = false;
               _novelStore.bookPosition(
                 _controller?.offset ?? 0,
                 progress: _readingProgress.value,
               );
+            }
           },
           icon: Icon(
             _novelStore.positionBooked

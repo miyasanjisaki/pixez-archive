@@ -27,8 +27,12 @@ import 'package:pixez/page/novel/user/novel_users_page.dart';
 import 'package:pixez/utils/haptic_util.dart';
 
 class NovelNewPage extends StatefulWidget {
+  final bool embedded;
+
+  const NovelNewPage({super.key, this.embedded = false});
+
   @override
-  _NovelNewPageState createState() => _NovelNewPageState();
+  State<NovelNewPage> createState() => _NovelNewPageState();
 }
 
 class _NovelNewPageState extends State<NovelNewPage>
@@ -50,56 +54,34 @@ class _NovelNewPageState extends State<NovelNewPage>
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    return Container(
-      child: Column(
-        children: [
-          AppBar(
-            title: TabBar(
-              onTap: (i) {
-                HapticUtil.selectionClick();
-              },
+    final tabs = TabBar(
+      onTap: (_) => HapticUtil.selectionClick(),
               controller: _tabController,
               isScrollable: true,
               tabs: [
-                Tab(
-                  text: I18n.of(context).news,
-                ),
-                Tab(
-                  text: I18n.of(context).bookmark,
-                ),
-                Tab(
-                  text: I18n.of(context).watchlist,
-                ),
-                Tab(
-                  text: I18n.of(context).follow,
-                )
+        Tab(text: I18n.of(context).news),
+        Tab(text: I18n.of(context).bookmark),
+        Tab(text: I18n.of(context).watchlist),
+        Tab(text: I18n.of(context).follow),
               ],
-            ),
-            actions: [
-              if (accountStore.now != null)
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12.0),
-                  child: Container(
-                    height: 26,
-                    width: 26,
-                    decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        border: Border.all(color: Colors.white, width: 1.0)),
-                    child: PainterAvatar(
-                      url: accountStore.now!.userImage,
-                      id: int.parse(accountStore.now!.userId),
-                      onTap: () {
-                        if (accountStore.now != null)
-                          Leader.push(
-                              context,
-                              NovelUsersPage(
-                                id: int.parse(accountStore.now!.userId),
-                              ));
-                      },
-                    ),
-                  ),
-                ),
+    );
+    final accountAction = _buildAccountAction(context);
+    return Column(
+      children: [
+        if (widget.embedded)
+          Material(
+            color: Theme.of(context).colorScheme.surface,
+            child: Row(
+              children: [
+                Expanded(child: tabs),
+                if (accountAction != null) accountAction,
             ],
+          ),
+          )
+        else
+          AppBar(
+            title: tabs,
+            actions: [if (accountAction != null) accountAction],
           ),
           Expanded(
               child: TabBarView(
@@ -107,14 +89,36 @@ class _NovelNewPageState extends State<NovelNewPage>
             children: [
               NovelNewList(),
               NovelBookmarkPage(),
-              (accountStore.now != null) ? NovelWatchList() : Container(),
-              (accountStore.now != null)
+              accountStore.now != null ? NovelWatchList() : Container(),
+              accountStore.now != null
                   ? FollowList(
-                      id: int.parse(accountStore.now!.userId), isNovel: true)
-                  : Container()
+                      id: int.parse(accountStore.now!.userId),
+                      isNovel: true,
+                    )
+                  : Container(),
             ],
-          )),
+          ),
+        ),
         ],
+    );
+  }
+
+  Widget? _buildAccountAction(BuildContext context) {
+    final account = accountStore.now;
+    if (account == null) return null;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      child: SizedBox(
+        height: 28,
+        width: 28,
+        child: PainterAvatar(
+          url: account.userImage,
+          id: int.parse(account.userId),
+          onTap: () => Leader.push(
+            context,
+            NovelUsersPage(id: int.parse(account.userId)),
+          ),
+        ),
       ),
     );
   }

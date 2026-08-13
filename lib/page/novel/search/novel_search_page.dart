@@ -32,8 +32,12 @@ import 'package:pixez/page/novel/viewer/novel_viewer.dart';
 import 'package:pixez/page/picture/illust_lighting_page.dart';
 
 class NovelSearchPage extends StatefulWidget {
+  final bool embedded;
+
+  const NovelSearchPage({super.key, this.embedded = false});
+
   @override
-  _NovelSearchPageState createState() => _NovelSearchPageState();
+  State<NovelSearchPage> createState() => _NovelSearchPageState();
 }
 
 class _NovelSearchPageState extends State<NovelSearchPage> {
@@ -68,57 +72,65 @@ class _NovelSearchPageState extends State<NovelSearchPage> {
 
   int? _id;
 
+  void _updateQuery(String value) {
+    setState(() => _id = int.tryParse(value));
+  }
+
+  void _submitQuery([String? value]) {
+    final query = (value ?? _textEditingController.text).trim();
+    if (query.isEmpty) return;
+    Leader.push(context, NovelResultPage(word: query));
+  }
+
+  Widget _buildSearchField() {
+    return TextField(
+      controller: _textEditingController,
+      textInputAction: TextInputAction.search,
+      decoration: InputDecoration(
+        hintText: I18n.of(context).search,
+        prefixIcon: const Icon(Icons.search),
+        border: const OutlineInputBorder(),
+      ),
+      onChanged: _updateQuery,
+      onSubmitted: _submitQuery,
+    );
+  }
+
+  Widget _buildEmbeddedSearchBar() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
+      child: Row(
+        children: [
+          Expanded(child: _buildSearchField()),
+          IconButton(
+            tooltip: I18n.of(context).search,
+            icon: const Icon(Icons.arrow_forward),
+            onPressed: _submitQuery,
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Observer(builder: (context) {
       return Container(
         child: CustomScrollView(
           slivers: [
-            SliverAppBar(
-              title: TextField(
-                cursorColor: Theme.of(context).iconTheme.color,
-                style: Theme.of(context)
-                    .textTheme
-                    .titleMedium!
-                    .copyWith(color: Theme.of(context).iconTheme.color),
-                controller: _textEditingController,
-                onChanged: (v) {
-                  final i = int.tryParse(v);
-                  if (i == null) {
-                    setState(() {
-                      _id = null;
-                    });
-                  } else {
-                    setState(() {
-                      _id = i;
-                    });
-                  }
-                },
-                onSubmitted: (v) {
-                  if (v.trim().isEmpty) return;
-                  String value = v.trim();
-                  Leader.push(
-                      context,
-                      NovelResultPage(
-                        word: value,
-                      ));
-                },
+            if (widget.embedded)
+              SliverToBoxAdapter(child: _buildEmbeddedSearchBar())
+            else
+              SliverAppBar(
+                title: _buildSearchField(),
+                actions: [
+                  IconButton(
+                    tooltip: I18n.of(context).search,
+                    icon: const Icon(Icons.search),
+                    onPressed: _submitQuery,
+                  ),
+                ],
               ),
-              actions: [
-                IconButton(
-                  icon: Icon(Icons.search),
-                  onPressed: () {
-                    if (_textEditingController.text.isNotEmpty) {
-                      Leader.push(
-                          context,
-                          NovelResultPage(
-                            word: _textEditingController.text,
-                          ));
-                    }
-                  },
-                )
-              ],
-            ),
             if (_id != null)
               SliverList(
                   delegate: SliverChildListDelegate([

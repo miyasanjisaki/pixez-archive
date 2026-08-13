@@ -1,14 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:pixez/i18n.dart';
-import 'package:pixez/lighting/lighting_store.dart';
 import 'package:pixez/main.dart';
 import 'package:pixez/network/api_client.dart';
 import 'package:pixez/page/novel/component/novel_lighting_list.dart';
 import 'package:pixez/utils/haptic_util.dart';
 
 class NovelRankPage extends StatefulWidget {
+  final bool embedded;
+
+  const NovelRankPage({super.key, this.embedded = false});
+
   @override
-  _NovelRankPageState createState() => _NovelRankPageState();
+  State<NovelRankPage> createState() => _NovelRankPageState();
 }
 
 class _NovelRankPageState extends State<NovelRankPage>
@@ -22,18 +25,8 @@ class _NovelRankPageState extends State<NovelRankPage>
     "week_ai_r18",
     "day_r18",
     "week_r18",
-    "week_r18g"
+    "week_r18g",
   ];
-  late FutureGet futureGet;
-
-  @override
-  void initState() {
-    futureGet = () {
-      return apiClient.getNovelRanking(modeList.first, null);
-    };
-    super.initState();
-  }
-
   String? toRequestDate(DateTime dateTime) {
     return "${dateTime.year}-${dateTime.month}-${dateTime.day}";
   }
@@ -41,54 +34,76 @@ class _NovelRankPageState extends State<NovelRankPage>
   String? dateTime;
   DateTime nowDateTime = DateTime.now();
 
-  @override
-  Widget build(BuildContext context) {
-    super.build(context);
-    List<String> w = I18n.of(context).novel_mode_list.split(" ");
-    return DefaultTabController(
-      length: modeList.length,
-      child: Scaffold(
-        appBar: AppBar(
-          title: TabBar(
-              onTap: (i) {
-                HapticUtil.selectionClick();
-              },
-              indicatorSize: TabBarIndicatorSize.label,
-              isScrollable: true,
-              tabs: [
-                for (var i in w)
-                  Tab(
-                    text: i,
-                  )
-              ]),
-          actions: [
-            IconButton(
-              icon: Icon(Icons.date_range),
-              onPressed: () async {
-                var nowdate = DateTime.now();
-                var date = await showDatePicker(
+  Future<void> _selectDate() async {
+    final date = await showDatePicker(
                     context: context,
                     initialDate: nowDateTime,
                     locale: userSetting.locale,
                     firstDate: DateTime(2007, 8),
-                    //pixiv于2007年9月10日由上谷隆宏等人首次推出第一个测试版...
-                    lastDate: nowdate);
-                if (date != null && mounted) {
-                  nowDateTime = date;
+      lastDate: DateTime.now(),
+    );
+    if (date == null || !mounted) return;
                   setState(() {
-                    this.dateTime = toRequestDate(date);
+      nowDateTime = date;
+      dateTime = toRequestDate(date);
                   });
                 }
-              },
+
+  Widget _buildModeTabs(List<String> labels) {
+    return TabBar(
+      onTap: (_) => HapticUtil.selectionClick(),
+      indicatorSize: TabBarIndicatorSize.label,
+      isScrollable: true,
+      tabs: [for (final label in labels) Tab(text: label)],
+    );
+  }
+
+  Widget _buildDateButton() {
+    return IconButton(
+      tooltip: MaterialLocalizations.of(context).dateRangePickerHelpText,
+      icon: const Icon(Icons.date_range),
+      onPressed: _selectDate,
+    );
+  }
+
+  Widget _buildResults() {
+    return TabBarView(
+      children: [
+        for (final mode in modeList)
+          NovelLightingList(
+            futureGet: () => apiClient.getNovelRanking(mode, dateTime),
             ),
           ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    final labels = I18n.of(context).novel_mode_list.split(" ");
+    return DefaultTabController(
+      length: modeList.length,
+      child: widget.embedded
+          ? Column(
+              children: [
+                Material(
+                  color: Theme.of(context).colorScheme.surface,
+                  child: Row(
+                    children: [
+                      Expanded(child: _buildModeTabs(labels)),
+                      _buildDateButton(),
+                    ],
         ),
-        body: TabBarView(children: [
-          for (var i in modeList)
-            NovelLightingList(
-              futureGet: () => apiClient.getNovelRanking(i, dateTime),
+                ),
+                Expanded(child: _buildResults()),
+              ],
             )
-        ]),
+          : Scaffold(
+              appBar: AppBar(
+                title: _buildModeTabs(labels),
+                actions: [_buildDateButton()],
+              ),
+              body: _buildResults(),
       ),
     );
   }

@@ -209,6 +209,7 @@ class _NovelLightingListState extends State<NovelLightingList> {
   }) {
     return ChoiceChip(
       selected: _resultSort == value,
+      showCheckmark: false,
       avatar: Icon(icon, size: 18),
       label: Text(label),
       onSelected: (_) {

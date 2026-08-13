@@ -54,11 +54,15 @@ abstract class _NovelStoreBase with Store {
   @observable
   List<NovelSpansData> spans = [];
 
+  // This is intentionally not observable: the viewer only uses it as a guard
+  // when it is about to persist its current position.
+  bool positionLoadComplete = false;
+
   NovelViewerPersistProvider _novelViewerPersistProvider =
       NovelViewerPersistProvider();
 
   @action
-  bookPosition(double offset, {double? progress}) async {
+  Future<void> bookPosition(double offset, {double? progress}) async {
     final normalizedProgress = progress?.clamp(0, 1).toDouble();
     LPrinter.d("bookPosition $offset progress=$normalizedProgress");
     await _novelViewerPersistProvider.open();
@@ -75,7 +79,7 @@ abstract class _NovelStoreBase with Store {
   }
 
   @action
-  deleteBookPosition() async {
+  Future<void> deleteBookPosition() async {
     LPrinter.d("deleteBookPosition");
     await _novelViewerPersistProvider.open();
     await _novelViewerPersistProvider.delete(id);
@@ -87,9 +91,12 @@ abstract class _NovelStoreBase with Store {
   @action
   Future<void> fetch() async {
     errorMessage = null;
-    try {
+    positionLoadComplete = false;
+    positionBooked = false;
       bookedOffset = 0.0;
       bookedProgress = null;
+    await fetchOffset();
+    try {
       final response = await apiClient.webviewNovel(id);
       final json = parseNovelJsonFromHtml(response.data);
       if (json == null) {
@@ -102,7 +109,6 @@ abstract class _NovelStoreBase with Store {
         novel = Novel.fromJson(response.data['novel']);
       }
       novelHistoryStore.insert(novel!);
-      fetchOffset();
     } catch (e) {
       print(e);
       errorMessage = e.toString();
@@ -110,7 +116,7 @@ abstract class _NovelStoreBase with Store {
   }
 
   @action
-  fetchOffset() async {
+  Future<void> fetchOffset() async {
     try {
       await _novelViewerPersistProvider.open();
       final result = await _novelViewerPersistProvider.getNovelPersistById(id);
@@ -120,7 +126,11 @@ abstract class _NovelStoreBase with Store {
         bookedOffset = result.offset;
         bookedProgress = result.progress?.clamp(0, 1).toDouble();
       }
-    } catch (e) {}
+    } catch (e) {
+      LPrinter.d(e);
+    } finally {
+      positionLoadComplete = true;
+    }
   }
 }
 

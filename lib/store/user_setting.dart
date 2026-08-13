@@ -17,6 +17,7 @@
 import 'dart:io';
 import 'dart:math';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_displaymode/flutter_displaymode.dart';
 import 'package:mobx/mobx.dart';
@@ -155,6 +156,8 @@ abstract class _UserSetting with Store {
   int hCrossCount = 4;
   @observable
   int? displayMode;
+  bool _displayModeReady = false;
+  bool _displayModeRequestInProgress = false;
   @observable
   NetworkMode networkMode = NetworkMode.ech;
   @observable
@@ -581,6 +584,7 @@ abstract class _UserSetting with Store {
     feedPreviewQuality = prefs.getInt(FEED_PREVIEW_QUALITY) ?? 0;
     singleFolder = prefs.getBool(SINGLE_FOLDER_KEY) ?? false;
     displayMode = prefs.getInt('display_mode');
+    _displayModeReady = true;
     hIsNotAllow = prefs.getBool('h_is_not_allow') ?? false;
     pictureQuality = prefs.getInt(PICTURE_QUALITY_KEY) ?? 0;
     mangaQuality = prefs.getInt(MANGA_QUALITY_KEY) ?? 0;
@@ -628,11 +632,8 @@ abstract class _UserSetting with Store {
     if (Platform.isAndroid) {
       try {
         await SecurePlugin.configSecureWindow(nsfwMask);
-        var modeList = await FlutterDisplayMode.supported;
-        if (displayMode != null && modeList.length > displayMode!) {
-          await FlutterDisplayMode.setPreferredMode(modeList[displayMode!]);
-        }
       } catch (e) {}
+      await applyPreferredDisplayMode(reason: 'settings-loaded');
     }
     format = prefs.getString(SAVE_FORMAT_KEY);
     if (format == null || format!.isEmpty) format = intialFormat;
@@ -745,6 +746,51 @@ abstract class _UserSetting with Store {
   setDisplayMode(int value) async {
     await prefs.setInt('display_mode', value);
     displayMode = value;
+  }
+
+  /// Restores the user's explicit Android display mode, or requests the
+  /// highest refresh rate available at the current resolution by default.
+  ///
+  /// Android treats this as a preference and can still override it for power,
+  /// thermal, multi-window, or device-specific display policies.
+  Future<void> applyPreferredDisplayMode({String reason = 'resume'}) async {
+    if (!Platform.isAndroid ||
+        !_displayModeReady ||
+        _displayModeRequestInProgress) {
+      return;
+    }
+    _displayModeRequestInProgress = true;
+    try {
+      final modeList = await FlutterDisplayMode.supported;
+      final selectedIndex = displayMode;
+      if (selectedIndex != null &&
+          selectedIndex >= 0 &&
+          selectedIndex < modeList.length) {
+        await FlutterDisplayMode.setPreferredMode(modeList[selectedIndex]);
+      } else {
+        // The plugin keeps the active resolution and selects its highest rate.
+        await FlutterDisplayMode.setHighRefreshRate();
+      }
+
+      if (kDebugMode) {
+        try {
+          final preferred = await FlutterDisplayMode.preferred;
+          final active = await FlutterDisplayMode.active;
+          debugPrint(
+            'PixEzDisplayMode reason=$reason selectedIndex=$selectedIndex '
+            'preferred=$preferred active=$active supported=$modeList',
+          );
+        } catch (error) {
+          debugPrint('PixEzDisplayMode diagnostics failed: $error');
+        }
+      }
+    } catch (error) {
+      if (kDebugMode) {
+        debugPrint('PixEzDisplayMode request failed: $error');
+      }
+    } finally {
+      _displayModeRequestInProgress = false;
+    }
   }
 
   @action

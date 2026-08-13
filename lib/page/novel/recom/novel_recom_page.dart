@@ -13,7 +13,9 @@ import 'package:pixez/network/api_client.dart';
 import 'package:pixez/page/novel/component/novel_lighting_list.dart';
 
 class NovelRecomPage extends StatefulWidget {
-  const NovelRecomPage({super.key});
+  final bool embedded;
+
+  const NovelRecomPage({super.key, this.embedded = false});
 
   @override
   State<NovelRecomPage> createState() => _NovelRecomPageState();
@@ -32,9 +34,11 @@ class _NovelRecomPageState extends State<NovelRecomPage>
   @override
   Widget build(BuildContext context) {
     super.build(context);
+    final list = NovelLightingList(futureGet: _futureGet);
+    if (widget.embedded) return list;
     return Scaffold(
       appBar: AppBar(title: Text(I18n.of(context).recommend)),
-      body: NovelLightingList(futureGet: _futureGet),
+      body: list,
     );
   }
 

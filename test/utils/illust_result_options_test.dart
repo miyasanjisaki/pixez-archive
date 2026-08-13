@@ -84,5 +84,24 @@ void main() {
       expect(copied, orderedEquals(source));
       expect(identical(copied, source), isFalse);
     });
+
+    test('manga-only results can be sorted without losing complete works', () {
+      final manga = source.where(
+        (item) => matchesIllustContent(item.type, IllustContentFilter.manga),
+      );
+      final comparator = buildIllustResultComparator<_Result>(
+        IllustResultSort.bookmarksDesc,
+        bookmarksOf: (value) => value.bookmarks,
+        viewsOf: (value) => value.views,
+      );
+
+      final sorted = stableSortedCopy(manga, comparator);
+
+      expect(sorted.map((item) => item.name), [
+        'most bookmarked',
+        'second tie',
+      ]);
+      expect(sorted.every((item) => item.type == 'manga'), isTrue);
+    });
   });
 }

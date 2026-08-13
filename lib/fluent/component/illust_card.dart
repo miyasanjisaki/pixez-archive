@@ -41,6 +41,7 @@ class IllustCard extends StatefulWidget {
   final List<IllustStore>? iStores;
   final List<IllustStore> Function()? iStoresProvider;
   final bool needToBan;
+  final bool showStats;
   final LightingStore lightingStore;
 
   IllustCard({
@@ -49,6 +50,7 @@ class IllustCard extends StatefulWidget {
     this.iStores,
     this.iStoresProvider,
     this.needToBan = false,
+    this.showStats = false,
   });
 
   @override
@@ -206,6 +208,12 @@ class _IllustCardState extends State<IllustCard> {
   }
 
   Widget cardText() {
+    if (store.illusts!.type == 'manga') {
+      return Text(
+        '${I18n.of(context).manga} · ${store.illusts!.pageCount}',
+        style: const TextStyle(color: Colors.white),
+      );
+    }
     if (store.illusts!.type != "illust") {
       return Text(store.illusts!.type, style: TextStyle(color: Colors.white));
     }
@@ -378,6 +386,16 @@ class _IllustCardState extends State<IllustCard> {
                   style: FluentTheme.of(context).typography.body,
                   strutStyle: StrutStyle(forceStrutHeight: true, leading: 0),
                 ),
+                if (widget.showStats)
+                  Text(
+                    '${I18n.of(context).total_bookmark} '
+                    '${_compactCount(store.illusts!.totalBookmarks)} · '
+                    '${I18n.of(context).total_view} '
+                    '${_compactCount(store.illusts!.totalView)}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: FluentTheme.of(context).typography.caption,
+                  ),
               ],
             ),
           ),
@@ -422,5 +440,15 @@ class _IllustCardState extends State<IllustCard> {
         ),
       ),
     );
+  }
+
+  String _compactCount(int value) {
+    if (value >= 1000000) {
+      return '${(value / 1000000).toStringAsFixed(value >= 10000000 ? 0 : 1)}M';
+    }
+    if (value >= 1000) {
+      return '${(value / 1000).toStringAsFixed(value >= 10000 ? 0 : 1)}K';
+    }
+    return '$value';
   }
 }

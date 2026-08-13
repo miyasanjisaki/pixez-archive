@@ -30,3 +30,35 @@ double calculateNovelReadingProgress({
   }
   return (offset / maxScrollExtent).clamp(0, 1).toDouble();
 }
+
+double calculateNovelRestoreOffset({
+  required double savedOffset,
+  required double? savedProgress,
+  required double minScrollExtent,
+  required double maxScrollExtent,
+}) {
+  if (!minScrollExtent.isFinite ||
+      !maxScrollExtent.isFinite ||
+      maxScrollExtent < minScrollExtent) {
+    return 0;
+  }
+  final progress = savedProgress;
+  final target = progress != null && progress.isFinite
+      ? minScrollExtent +
+            (maxScrollExtent - minScrollExtent) * progress.clamp(0, 1)
+      : savedOffset;
+  if (!target.isFinite) return minScrollExtent;
+  return target.clamp(minScrollExtent, maxScrollExtent).toDouble();
+}
+
+bool shouldAutomaticallyPersistNovelPosition({
+  required bool automaticSaveSuppressed,
+  required bool positionLoadComplete,
+  required bool restorePending,
+  required bool hasScrollClients,
+}) {
+  return !automaticSaveSuppressed &&
+      positionLoadComplete &&
+      !restorePending &&
+      hasScrollClients;
+}
