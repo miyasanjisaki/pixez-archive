@@ -50,6 +50,9 @@ List<int> extractPixivIllustIdsFromText(String text) {
   } on FormatException {
     // A malformed percent escape should not prevent the other hints from
     // being inspected.
+  } on ArgumentError {
+    // Uri.decodeFull also reports malformed percent escapes and arbitrary
+    // binary metadata as ArgumentError on some Dart versions.
   }
 
   for (final variant in variants) {

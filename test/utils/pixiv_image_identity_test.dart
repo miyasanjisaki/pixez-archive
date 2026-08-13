@@ -72,6 +72,17 @@ void main() {
       expect(extractPixivIllustId(bytes: pngText), 32109876);
     });
 
+    test('ignores malformed percent escapes in binary metadata', () {
+      final metadata = Uint8List.fromList(
+        latin1.encode(
+          'Exif\x00UserComment\x00%GZ '
+          'https://www.pixiv.net/artworks/21098765',
+        ),
+      );
+
+      expect(extractPixivIllustId(bytes: metadata), 21098765);
+    });
+
     test('does not guess IDs from unrelated camera names or timestamps', () {
       expect(extractPixivIllustId(hints: ['IMG_20260813_165200.jpg']), isNull);
       expect(extractPixivIllustId(hints: ['Screenshot_123456789.png']), isNull);
