@@ -20,7 +20,7 @@ final List<RegExp> _explicitPixivIdPatterns = [
 ];
 
 final RegExp _canonicalPixivFileName = RegExp(
-  r'(?:^|[^0-9])([1-9][0-9]{4,11})_p[0-9]+[^/\\]*\.(?:jpe?g|png|webp|gif|avif)(?:$|[?#])',
+  r'(?:^|[^0-9])([1-9][0-9]{4,11})_p[0-9]+[^/\\]*\.(?:jpe?g|png|webp|gif|avif)(?=$|[?#\x00-\x20])',
   caseSensitive: false,
 );
 
