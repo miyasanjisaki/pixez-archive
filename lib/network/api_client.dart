@@ -99,6 +99,22 @@ class ApiClient {
     return ConversionLayerAdapter(compatibleClient);
   }
 
+  /// Creates a transport that keeps requests on Pixiv's own image host.
+  ///
+  /// This is used for private-account operations such as bookmark visual
+  /// search, where rewriting image URLs through a configured third-party
+  /// source would disclose private bookmark identifiers. Compatibility DNS is
+  /// still applied when the selected network mode requires it.
+  static Future<ConversionLayerAdapter> createDirectPixivImageClient() async {
+    final compatibleClient = await r.RhttpCompatibleClient.create(
+      settings: PixezNetworkSettings.forImages(
+        PixezNetworkSettings.imageHost,
+        userSetting.networkMode,
+      ),
+    );
+    return ConversionLayerAdapter(compatibleClient);
+  }
+
   ApiClient({bool isBookmark = false}) {
     String time = getIsoDate();
     httpClient =

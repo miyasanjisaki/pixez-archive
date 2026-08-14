@@ -392,16 +392,6 @@ class _SettingQualityPageState extends State<SettingQualityPage>
               },
             ),
           ),
-          if (!Platform.isIOS)
-            ListTile(
-              title: Text(I18n.of(context).open_saucenao_using_webview),
-              trailing: ToggleSwitch(
-                checked: userSetting.useSaunceNaoWebview,
-                onChanged: (value) async {
-                  userSetting.setUseSaunceNaoWebview(value);
-                },
-              ),
-            ),
           ListTile(
             title: Text(I18n.of(context).illust_detail_save_skip_confirm),
             trailing: ToggleSwitch(
@@ -424,7 +414,8 @@ class _SettingQualityPageState extends State<SettingQualityPage>
             ListTile(
               title: Text(I18n.of(context).ignore_current_version_update),
               trailing: ToggleSwitch(
-                checked: Updater.result == Result.yes &&
+                checked:
+                    Updater.result == Result.yes &&
                     Updater.latestVersion != null &&
                     userSetting.ignoreUpdateVersion == Updater.latestVersion,
                 onChanged: (value) async {

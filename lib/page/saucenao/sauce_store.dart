@@ -33,7 +33,11 @@ import 'package:pixez/i18n.dart';
 import 'package:pixez/main.dart';
 import 'package:pixez/models/download_identity_index.dart';
 import 'package:pixez/models/task_persist.dart';
+import 'package:pixez/page/saucenao/bookmark_visual_search_dialog.dart';
 import 'package:pixez/page/saucenao/iqdb_provider.dart';
+import 'package:pixez/page/webview/ascii2d_browser_search_page.dart';
+import 'package:pixez/utils/bookmark_visual_search.dart';
+import 'package:pixez/utils/pixiv_bookmark_visual_search.dart';
 import 'package:pixez/utils/pixiv_image_identity.dart';
 import 'package:pixez/utils/reverse_image_search.dart';
 import 'package:pixez/utils/saucenao_result_parser.dart';
@@ -105,9 +109,12 @@ abstract class SauceStoreBase with Store {
 
   bool _disposed = false;
   bool _requestInProgress = false;
+  PixivBookmarkVisualSearchController? _bookmarkSearchController;
 
   void dispose() {
     _disposed = true;
+    _bookmarkSearchController?.dispose();
+    _bookmarkSearchController = null;
     dio.close(force: true);
     _iqdbProvider.close();
     unawaited(_streamController.close());
@@ -262,6 +269,27 @@ abstract class SauceStoreBase with Store {
         _fail('External image search requires confirmation');
         return null;
       }
+
+      if (accountStore.now != null) {
+        final bookmarkChoice = await showBookmarkSearchChoiceDialog(context);
+        if (_disposed || !context.mounted) return null;
+        if (bookmarkChoice == BookmarkSearchChoice.cancel) {
+          notStart = true;
+          phase.value = SauceSearchPhase.idle;
+          return null;
+        }
+        if (bookmarkChoice == BookmarkSearchChoice.scanBookmarks) {
+          final bookmarkEvent = await _searchOwnBookmarks(
+            context: context,
+            queryBytes: originImageBytes,
+            queryFileName: pickedName,
+            querySha256: fingerprints['sha256']!,
+          );
+          if (_disposed || !context.mounted) return null;
+          if (bookmarkEvent != null) return bookmarkEvent;
+        }
+      }
+
       final uploadConfirmed = await _confirmExternalUpload(context);
       if (_disposed || !context.mounted) return null;
       if (!uploadConfirmed) {
@@ -365,9 +393,11 @@ abstract class SauceStoreBase with Store {
       }
 
       if (batch.successfulProviders == 0 && batch.serviceMessages.isNotEmpty) {
+        if (await _offerAscii2dFallback(context, preparedBytes)) return null;
         _fail(batch.serviceMessages.join('\n'));
         return null;
       }
+      if (await _offerAscii2dFallback(context, preparedBytes)) return null;
       if (batch.serviceMessages.isNotEmpty) {
         final isChinese = Localizations.localeOf(context).languageCode == 'zh';
         lastError.value = isChinese
@@ -396,6 +426,237 @@ abstract class SauceStoreBase with Store {
     } finally {
       _requestInProgress = false;
     }
+  }
+
+  Future<SauceSearchEvent?> _searchOwnBookmarks({
+    required BuildContext context,
+    required Uint8List queryBytes,
+    required String querySha256,
+    String? queryFileName,
+  }) async {
+    PixivBookmarkVisualSearchController? controller;
+    try {
+      phase.value = SauceSearchPhase.inspecting;
+      const limits = BookmarkVisualSearchLimits(
+        maximumPagesPerVisibility: 30,
+        maximumWorks: 1800,
+        maximumImages: 2400,
+        downloadConcurrency: 2,
+        maximumDistance: 4,
+        minimumDistanceGap: 3,
+      );
+      controller = await PixivBookmarkVisualSearchController.createDefault(
+        limits: limits,
+      );
+      if (_disposed || !context.mounted) {
+        controller.dispose();
+        return null;
+      }
+      _bookmarkSearchController?.dispose();
+      _bookmarkSearchController = controller;
+
+      late BookmarkVisualSearchResult result;
+      BookmarkVisualCandidate? candidate;
+      var fullScanRequested = false;
+      while (true) {
+        final activeController = controller;
+        if (activeController == null) return null;
+        final searchResult = await showBookmarkVisualSearchProgressDialog(
+          context: context,
+          controller: activeController,
+          queryBytes: queryBytes,
+          queryFileName: queryFileName,
+        );
+        if (_disposed || !context.mounted || searchResult == null) return null;
+        result = searchResult;
+        phase.value = SauceSearchPhase.inspecting;
+
+        final canReviewCandidates = switch (result.status) {
+          BookmarkVisualSearchStatus.matched ||
+          BookmarkVisualSearchStatus.ambiguous ||
+          BookmarkVisualSearchStatus.incomplete ||
+          BookmarkVisualSearchStatus.limitReached => true,
+          _ => false,
+        };
+        if (!canReviewCandidates ||
+            (result.match == null && result.candidates.isEmpty)) {
+          break;
+        }
+
+        final decision = await showBookmarkVisualCandidatesDialog(
+          context: context,
+          result: result,
+          queryBytes: queryBytes,
+          controller: activeController,
+        );
+        if (_disposed || !context.mounted) return null;
+        if (decision.type == BookmarkVisualCandidateDecisionType.selected) {
+          candidate = decision.candidate;
+          break;
+        }
+        if (decision.type !=
+                BookmarkVisualCandidateDecisionType.continueScanning ||
+            fullScanRequested) {
+          break;
+        }
+
+        // A zero-distance dHash is still a visual hint. If the user rejects an
+        // early candidate, rerun without perceptual early exit so a newer
+        // collision cannot hide the real work on later bookmark pages.
+        fullScanRequested = true;
+        if (identical(_bookmarkSearchController, activeController)) {
+          _bookmarkSearchController = null;
+        }
+        activeController.dispose();
+        controller = await PixivBookmarkVisualSearchController.createDefault(
+          limits: limits,
+          allowEarlyExactPerceptualMatch: false,
+        );
+        if (_disposed || !context.mounted) {
+          controller.dispose();
+          return null;
+        }
+        _bookmarkSearchController = controller;
+      }
+      if (candidate != null) {
+        final confirmationResult =
+            result.match?.illustId == candidate.illustId &&
+                result.match?.pageIndex == candidate.pageIndex
+            ? result
+            : BookmarkVisualSearchResult(
+                status: BookmarkVisualSearchStatus.matched,
+                match: candidate,
+                candidates: result.candidates,
+                progress: result.progress,
+                scanComplete: result.scanComplete,
+                requiresConfirmation: true,
+                querySha256: querySha256,
+              );
+        try {
+          final cached = await controller!.confirmMatch(
+            result: confirmationResult,
+            queryBytes: queryBytes,
+            queryFileName: queryFileName,
+          );
+          if (!cached) {
+            final chinese =
+                Localizations.localeOf(context).languageCode == 'zh';
+            BotToast.showText(
+              text: chinese
+                  ? '候选确认失败，未写入本地索引'
+                  : 'The candidate could not be confirmed and was not cached',
+            );
+            return null;
+          }
+        } catch (error, stackTrace) {
+          // The user has visually confirmed the Pixiv candidate. A cache write
+          // failure must not hide the confirmed artwork from this search.
+          LPrinter.d('Unable to cache confirmed bookmark match: $error');
+          LPrinter.d(stackTrace);
+        }
+        return _finish([candidate.illustId], matchedLocally: true);
+      }
+
+      if (result.status != BookmarkVisualSearchStatus.cancelled) {
+        final chinese = Localizations.localeOf(context).languageCode == 'zh';
+        final message = switch (result.status) {
+          BookmarkVisualSearchStatus.notFound =>
+            chinese
+                ? '在已扫描的收藏中没有找到，可继续使用外部识图'
+                : 'No match in the scanned bookmarks; external search is still available',
+          BookmarkVisualSearchStatus.limitReached =>
+            chinese
+                ? '已达到收藏扫描上限，未找到可确认候选'
+                : 'The bookmark scan limit was reached without a confirmed candidate',
+          BookmarkVisualSearchStatus.incomplete =>
+            chinese
+                ? '部分收藏预览图无法读取，未找到可确认候选'
+                : 'Some bookmark previews could not be read and no candidate was confirmed',
+          BookmarkVisualSearchStatus.accountChanged =>
+            chinese
+                ? '扫描期间 Pixiv 账号已变更，已停止'
+                : 'The selected Pixiv account changed, so the scan was stopped',
+          BookmarkVisualSearchStatus.unauthenticated =>
+            chinese
+                ? '当前没有可用的 Pixiv 登录账号'
+                : 'No signed-in Pixiv account is available',
+          BookmarkVisualSearchStatus.ambiguous =>
+            chinese
+                ? '收藏中有多个过于接近的候选，未自动记录'
+                : 'Several bookmark candidates were too close; nothing was cached',
+          BookmarkVisualSearchStatus.failed =>
+            chinese
+                ? '收藏扫描失败，可继续使用外部识图'
+                : 'Bookmark scanning failed; external search is still available',
+          BookmarkVisualSearchStatus.matched ||
+          BookmarkVisualSearchStatus.cancelled => '',
+        };
+        if (message.isNotEmpty) BotToast.showText(text: message);
+      }
+      return null;
+    } catch (error, stackTrace) {
+      LPrinter.d('Bookmark visual search failed: $error\n$stackTrace');
+      if (!_disposed && context.mounted) {
+        final chinese = Localizations.localeOf(context).languageCode == 'zh';
+        BotToast.showText(
+          text: chinese
+              ? '无法扫描收藏，可继续使用外部识图'
+              : 'Bookmarks could not be scanned; external search is still available',
+        );
+      }
+      return null;
+    } finally {
+      if (identical(_bookmarkSearchController, controller)) {
+        _bookmarkSearchController = null;
+      }
+      controller?.dispose();
+    }
+  }
+
+  Future<bool> _offerAscii2dFallback(
+    BuildContext context,
+    Uint8List sanitizedImageBytes,
+  ) async {
+    if (!Platform.isAndroid || _disposed || !context.mounted) return false;
+    final chinese = Localizations.localeOf(context).languageCode == 'zh';
+    final open =
+        await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (dialogContext) => AlertDialog(
+            title: Text(
+              chinese ? '外部索引未找到原作' : 'No source in the external indexes',
+            ),
+            content: Text(
+              chinese
+                  ? 'SauceNAO 和 IQDB 未找到可靠候选。可以在 Ascii2D 官方网页继续：完整图用「色合搜索」，裁剪图或局部图用「特征搜索」。只有你在下一页再次点击「使用这张图」后，去除元数据的副本才会交给 Ascii2D。'
+                  : 'SauceNAO and IQDB found no reliable candidate. Continue '
+                        'on the official Ascii2D page: use color search for a '
+                        'complete image and feature search for a crop or '
+                        'partial image. The metadata-free copy is handed to '
+                        'Ascii2D only after you tap Use this image again.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+                child: Text(chinese ? '暂不' : 'Not now'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(dialogContext).pop(true),
+                child: Text(chinese ? '打开 Ascii2D' : 'Open Ascii2D'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!open || _disposed || !context.mounted) return false;
+
+    notStart = true;
+    phase.value = SauceSearchPhase.idle;
+    await Navigator.of(context).push(
+      Ascii2dBrowserSearchPage.route(sanitizedImageBytes: sanitizedImageBytes),
+    );
+    return true;
   }
 
   Future<TaskPersist?> _completedTaskForName(String fileName) async {
@@ -541,9 +802,7 @@ abstract class SauceStoreBase with Store {
         successfulProviders++;
       } else {
         messages.add(iqdbResponse.serviceMessage!);
-        LPrinter.d(
-          'IQDB provider unavailable: ${iqdbResponse.serviceMessage}',
-        );
+        LPrinter.d('IQDB provider unavailable: ${iqdbResponse.serviceMessage}');
       }
       hits.addAll(iqdbResponse.hits);
     } catch (error, stackTrace) {

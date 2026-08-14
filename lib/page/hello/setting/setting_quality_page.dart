@@ -355,14 +355,6 @@ class _SettingQualityPageState extends State<SettingQualityPage>
                       userSetting.changeNsfwMask(value);
                     },
                   ),
-                if (!Platform.isIOS)
-                  SwitchListTile(
-                    value: userSetting.useSaunceNaoWebview,
-                    title: Text(I18n.of(context).open_saucenao_using_webview),
-                    onChanged: (value) async {
-                      userSetting.setUseSaunceNaoWebview(value);
-                    },
-                  ),
                 SwitchListTile(
                   value: userSetting.illustDetailSaveSkipLongPress,
                   title: Text(I18n.of(context).illust_detail_save_skip_confirm),
@@ -379,9 +371,11 @@ class _SettingQualityPageState extends State<SettingQualityPage>
                 ),
                 if (!Constants.isGooglePlay && !Platform.isIOS)
                   SwitchListTile(
-                    value: Updater.result == Result.yes &&
+                    value:
+                        Updater.result == Result.yes &&
                         Updater.latestVersion != null &&
-                        userSetting.ignoreUpdateVersion == Updater.latestVersion,
+                        userSetting.ignoreUpdateVersion ==
+                            Updater.latestVersion,
                     title: Text(I18n.of(context).ignore_current_version_update),
                     onChanged: (value) async {
                       if (value) {

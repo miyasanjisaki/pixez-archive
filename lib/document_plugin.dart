@@ -16,26 +16,57 @@
 import 'package:flutter/services.dart';
 import 'package:pixez/main.dart';
 
+class SavedDocumentImage {
+  final String token;
+  final String displayName;
+  final String? relativePath;
+  final int? byteLength;
+
+  const SavedDocumentImage({
+    required this.token,
+    required this.displayName,
+    this.relativePath,
+    this.byteLength,
+  });
+
+  factory SavedDocumentImage.fromMap(Map<Object?, Object?> map) {
+    return SavedDocumentImage(
+      token: map['token'] as String,
+      displayName: map['display_name'] as String,
+      relativePath: map['relative_path'] as String?,
+      byteLength: (map['byte_length'] as num?)?.toInt(),
+    );
+  }
+}
+
 class DocumentPlugin {
   static const platform = const MethodChannel('com.perol.dev/save');
 
-  static Future<bool?> save(Uint8List uint8list, String fileName,
-      {bool clearOld = false, int? saveMode}) async {
+  static Future<bool?> save(
+    Uint8List uint8list,
+    String fileName, {
+    bool clearOld = false,
+    int? saveMode,
+  }) async {
     return platform.invokeMethod<bool>('save', {
       "data": uint8list,
       "name": fileName,
       "save_mode": saveMode ?? userSetting.saveMode,
-      "clear_old": clearOld
+      "clear_old": clearOld,
     });
   }
 
-  static Future<bool?> saveFromPath(String sourcePath, String fileName,
-      {bool clearOld = false, int? saveMode}) async {
+  static Future<bool?> saveFromPath(
+    String sourcePath,
+    String fileName, {
+    bool clearOld = false,
+    int? saveMode,
+  }) async {
     return platform.invokeMethod<bool>('saveFromPath', {
       "source_path": sourcePath,
       "name": fileName,
       "save_mode": saveMode ?? userSetting.saveMode,
-      "clear_old": clearOld
+      "clear_old": clearOld,
     });
   }
 
@@ -66,8 +97,39 @@ class DocumentPlugin {
         "save_mode": saveMode ?? userSetting.saveMode,
       });
 
-  static Future<dynamic> choiceFolder({int? saveMode}) =>
-      platform.invokeMethod("choice_folder", {
-        "save_mode": saveMode ?? userSetting.saveMode,
-      });
+  static Future<dynamic> choiceFolder({int? saveMode}) => platform.invokeMethod(
+    "choice_folder",
+    {"save_mode": saveMode ?? userSetting.saveMode},
+  );
+
+  /// Lists image metadata under the currently authorized PixEz save root.
+  /// Image bytes are deliberately loaded one at a time by [readSavedImage].
+  static Future<List<SavedDocumentImage>> listSavedImages({
+    int maximumCount = 4096,
+    int maximumDepth = 8,
+    int? saveMode,
+  }) async {
+    final result = await platform.invokeListMethod<Object?>('listSavedImages', {
+      'save_mode': saveMode ?? userSetting.saveMode,
+      'max_count': maximumCount,
+      'max_depth': maximumDepth,
+    });
+    if (result == null) return const <SavedDocumentImage>[];
+    return result
+        .whereType<Map<Object?, Object?>>()
+        .map(SavedDocumentImage.fromMap)
+        .toList(growable: false);
+  }
+
+  /// Reads one image previously returned by [listSavedImages]. Native code
+  /// validates that the opaque token is still inside the authorized save root.
+  static Future<Uint8List?> readSavedImage(
+    String token, {
+    int maximumBytes = 64 * 1024 * 1024,
+    int? saveMode,
+  }) => platform.invokeMethod<Uint8List>('readSavedImage', {
+    'save_mode': saveMode ?? userSetting.saveMode,
+    'token': token,
+    'max_bytes': maximumBytes,
+  });
 }
