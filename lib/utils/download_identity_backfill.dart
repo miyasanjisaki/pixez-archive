@@ -182,10 +182,10 @@ DownloadIdentityBackfillPlan planDownloadIdentityBackfill({
     for (final task in matchingTasks.where(
       (task) => task.illustId == illustId,
     )) {
-      final pageIndex = extractPixivPageIndex(
-        hints: <String?>[task.fileName, task.sourceUrl],
-      );
-      if (pageIndex != null) pageIndexes.add(pageIndex);
+      for (final taskHint in <String?>[task.fileName, task.sourceUrl]) {
+        final pageIndex = extractPixivPageIndex(hints: <String?>[taskHint]);
+        if (pageIndex != null) pageIndexes.add(pageIndex);
+      }
     }
     if (pageIndexes.length > 1) {
       ambiguousCount++;
