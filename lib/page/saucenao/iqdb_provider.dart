@@ -1,0 +1,88 @@
+import 'dart:convert';
+
+import 'package:dio/dio.dart';
+import 'package:pixez/utils/iqdb_result_parser.dart';
+import 'package:pixez/utils/reverse_image_search.dart';
+
+class IqdbSearchProvider implements ReverseImageSearchProvider {
+  static const int maxInputBytes = 8 * 1024 * 1024;
+  static const List<String> _safeServiceIds = [
+    '1',
+    '2',
+    '3',
+    '4',
+    '5',
+    '6',
+    '11',
+    '13',
+  ];
+
+  final Dio dio;
+
+  IqdbSearchProvider({Dio? dio})
+    : dio =
+          dio ??
+          Dio(
+            BaseOptions(
+              baseUrl: 'https://safe.iqdb.org',
+              connectTimeout: const Duration(seconds: 20),
+              sendTimeout: const Duration(seconds: 45),
+              receiveTimeout: const Duration(seconds: 45),
+              followRedirects: true,
+              headers: const {
+                'Accept': 'text/html,application/xhtml+xml',
+                'User-Agent': 'PixEz-Archive reverse-image-search',
+              },
+            ),
+          );
+
+  @override
+  String get id => 'iqdb';
+
+  @override
+  Future<ReverseImageProviderResponse> search(ReverseImageQuery query) async {
+    if (query.bytes.length > maxInputBytes) {
+      return const ReverseImageProviderResponse(
+        serviceMessage: 'IQDB image exceeds the 8 MB limit',
+      );
+    }
+
+    final form = FormData();
+    for (final serviceId in _safeServiceIds) {
+      form.fields.add(MapEntry('service[]', serviceId));
+    }
+    form.files.add(
+      MapEntry(
+        'file',
+        MultipartFile.fromBytes(
+          query.bytes,
+          filename: 'pixez_reverse_search.${query.extension}',
+        ),
+      ),
+    );
+
+    try {
+      final response = await dio.post<dynamic>('/', data: form);
+      final html = switch (response.data) {
+        String value => value,
+        List<int> value => utf8.decode(value, allowMalformed: true),
+        _ => response.data.toString(),
+      };
+      return ReverseImageProviderResponse(
+        hits: parseIqdbResults(html, probe: query.probe),
+      );
+    } on IqdbResponseException catch (error) {
+      return ReverseImageProviderResponse(serviceMessage: error.message);
+    } on DioException catch (error) {
+      final status = error.response?.statusCode;
+      return ReverseImageProviderResponse(
+        rateLimited: status == 429,
+        serviceMessage: status == null
+            ? 'IQDB network error'
+            : 'IQDB request failed ($status)',
+      );
+    }
+  }
+
+  void close() => dio.close(force: true);
+}

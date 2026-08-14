@@ -89,6 +89,7 @@ void main() {
     expect(result.exactMatches, isEmpty);
     expect(result.possibleMatches.map((candidate) => candidate.illustId), [
       12345678,
+      23456789,
     ]);
   });
 
@@ -127,6 +128,74 @@ void main() {
     expect(result.possibleMatches.map((candidate) => candidate.illustId), [
       23456789,
     ]);
+    expect(result.externalMatches.single.sourceUrl, contains('danbooru'));
+    expect(result.externalMatches.single.similarity, 99);
+  });
+
+  test('retains a generic source result instead of inventing a Pixiv ID', () {
+    const html = '''
+      <div class="result">
+        <div class="resultsimilarityinfo">76.00%</div>
+        <a href="https://gelbooru.com/index.php?page=post&amp;s=view&amp;id=44">
+          Gelbooru source
+        </a>
+      </div>
+    ''';
+
+    final result = parseSauceNaoPixivResults(html);
+    expect(result.exactMatches, isEmpty);
+    expect(result.possibleMatches, isEmpty);
+    expect(result.externalMatches, hasLength(1));
+    expect(result.externalMatches.single.title, 'Gelbooru source');
+  });
+
+  test(
+    'filters a weak generic source but retains an explicit weak Pixiv ID',
+    () {
+      const html = '''
+      <div class="result">
+        <div class="resultsimilarityinfo">39.00%</div>
+        <a href="https://example.com/posts/44">weak mirror</a>
+      </div>
+      <div class="result">
+        <div class="resultsimilarityinfo">38.00%</div>
+        <strong>Pixiv ID:</strong> 19871999
+      </div>
+    ''';
+
+      final result = parseSauceNaoPixivResults(html);
+      expect(result.externalMatches, isEmpty);
+      expect(result.possibleMatches.single.illustId, 19871999);
+    },
+  );
+
+  test('does not promote an unrelated canonical-looking filename to Pixiv', () {
+    const html = '''
+      <div class="result">
+        <div class="resultsimilarityinfo">96.00%</div>
+        <a href="https://example.com/posts/44">mirror</a>
+        <img src="https://example.com/files/12345678_p0.jpg">
+      </div>
+    ''';
+
+    final result = parseSauceNaoPixivResults(html);
+    expect(result.exactMatches, isEmpty);
+    expect(result.possibleMatches, isEmpty);
+    expect(result.externalMatches.single.sourceUrl, contains('example.com'));
+  });
+
+  test('accepts an explicitly labelled Pixiv ID on a mirror card', () {
+    const html = '''
+      <div class="result">
+        <div class="resultsimilarityinfo">77.00%</div>
+        <strong>Pixiv ID:</strong> 19871999
+        <a href="https://danbooru.donmai.us/posts/55">mirror</a>
+      </div>
+    ''';
+
+    final result = parseSauceNaoPixivResults(html);
+    expect(result.possibleMatches.single.illustId, 19871999);
+    expect(result.externalMatches, isEmpty);
   });
 
   test('reports a service limit page as an error', () {
@@ -137,6 +206,21 @@ void main() {
     expect(
       () => parseSauceNaoPixivIds('<form>CAPTCHA verification required</form>'),
       throwsA(isA<SauceNaoResponseException>()),
+    );
+    expect(
+      () => parseSauceNaoPixivIds(
+        '<title>Just a moment...</title>'
+        '<p>Enable JavaScript and cookies to continue</p>'
+        '<script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js">'
+        '</script>',
+      ),
+      throwsA(
+        isA<SauceNaoResponseException>().having(
+          (error) => error.message,
+          'message',
+          contains('browser verification'),
+        ),
+      ),
     );
   });
 }

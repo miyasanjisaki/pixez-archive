@@ -28,6 +28,7 @@ import 'package:pixez/open_setting_plugin.dart';
 import 'package:pixez/page/directory/save_mode_choice_page.dart';
 import 'package:pixez/page/hello/setting/save_eval_page.dart';
 import 'package:pixez/page/hello/setting/save_format_page.dart';
+import 'package:pixez/utils/display_mode_selection.dart';
 
 class PlatformPage extends StatefulWidget {
   @override
@@ -38,6 +39,7 @@ class _PlatformPageState extends State<PlatformPage> {
   String path = "";
   List<DisplayMode> modes = <DisplayMode>[];
   DisplayMode? selected;
+  DisplayMode? active;
 
   @override
   void initState() {
@@ -48,6 +50,7 @@ class _PlatformPageState extends State<PlatformPage> {
   Future<void> fetchModes() async {
     try {
       final modeList = await FlutterDisplayMode.supported;
+      final activeMode = await FlutterDisplayMode.active;
 
       /// On OnePlus 7 Pro:
       /// #1 1080x2340 @ 60Hz
@@ -70,6 +73,7 @@ class _PlatformPageState extends State<PlatformPage> {
       setState(() {
         modes = modeList;
         selected = preferred;
+        active = activeMode;
       });
       await userSetting.refreshDisplayModeDiagnostics();
     } on PlatformException catch (e) {
@@ -110,6 +114,59 @@ class _PlatformPageState extends State<PlatformPage> {
 
   String version = "";
   bool singleFolder = false;
+
+  Future<void> _showDisplayModeDiagnostics() async {
+    await userSetting.refreshDisplayModeDiagnostics(
+      reason: 'advanced-settings',
+    );
+    try {
+      final activeMode = await FlutterDisplayMode.active;
+      if (mounted) {
+        setState(() {
+          active = activeMode;
+        });
+      }
+    } on PlatformException {
+      // The safe report will show an unknown rate when Android cannot provide
+      // the current mode. Never expose the raw platform exception to the UI.
+    }
+    if (!mounted) return;
+
+    final isChinese = Localizations.localeOf(context).languageCode == 'zh';
+    final report = buildSafeDisplayModeDiagnosticReport(
+      automatic: userSetting.displayModeAutomatic,
+      activeRefreshRate: active?.refreshRate,
+      nativeDiagnostics: userSetting.displayModeDiagnostics,
+      chinese: isChinese,
+    );
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(isChinese ? '高级诊断' : 'Advanced diagnostics'),
+        content: SingleChildScrollView(child: SelectableText(report)),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: report));
+              if (!dialogContext.mounted) return;
+              ScaffoldMessenger.of(dialogContext).showSnackBar(
+                SnackBar(
+                  content: Text(
+                    isChinese ? '诊断摘要已复制' : 'Diagnostic summary copied',
+                  ),
+                ),
+              );
+            },
+            child: Text(isChinese ? '复制诊断' : 'Copy'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: Text(isChinese ? '关闭' : 'Close'),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -252,13 +309,15 @@ class _PlatformPageState extends State<PlatformPage> {
                                         title: Text(
                                           mode.id == 0
                                               ? 'Automatic (highest refresh rate)'
-                                              : mode.toString(),
+                                              : '${formatRefreshRate(mode.refreshRate)} Hz',
                                         ),
                                         subtitle: mode.id == 0
                                             ? const Text(
                                                 'Keep the active resolution and prefer its highest refresh rate.',
                                               )
-                                            : null,
+                                            : Text(
+                                                '${mode.width} × ${mode.height}',
+                                              ),
                                         trailing:
                                             (mode.id == 0 &&
                                                     userSetting
@@ -288,9 +347,28 @@ class _PlatformPageState extends State<PlatformPage> {
                   },
                   title: Text(I18n.of(context).display_mode),
                   subtitle: Text(
-                    '${userSetting.displayModeAutomatic ? 'Automatic (highest refresh rate)' : selected ?? ''}'
-                    '${userSetting.displayModeDiagnostics.isEmpty ? '' : '\n${userSetting.displayModeDiagnostics}'}',
+                    displayModeUserSummary(
+                      automatic: userSetting.displayModeAutomatic,
+                      activeRefreshRate: active?.refreshRate,
+                      selectedRefreshRate: selected?.refreshRate,
+                      chinese:
+                          Localizations.localeOf(context).languageCode == 'zh',
+                    ),
                   ),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.monitor_heart_outlined),
+                  title: Text(
+                    Localizations.localeOf(context).languageCode == 'zh'
+                        ? '高级诊断'
+                        : 'Advanced diagnostics',
+                  ),
+                  subtitle: Text(
+                    Localizations.localeOf(context).languageCode == 'zh'
+                        ? '仅显示刷新率与高刷请求状态'
+                        : 'Refresh-rate request status only',
+                  ),
+                  onTap: _showDisplayModeDiagnostics,
                 ),
                 if ((_androidInfo?.version.sdkInt ?? 0) > 30) ...[
                   Padding(

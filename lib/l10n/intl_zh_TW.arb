@@ -361,6 +361,6 @@
   "novel_bookmarks": "收藏數",
   "novel_views": "閱讀數",
   "novel_likes": "按讚",
-  "reverse_image_external_title": "繼續使用 SauceNAO？",
-  "reverse_image_external_message": "PixEz 無法在本機辨識出 Pixiv 作品 ID。僅在您同意將移除中繼資料並縮小後的圖片副本上傳到第三方 SauceNAO 服務時繼續。"
+  "reverse_image_external_title": "繼續使用外部識圖？",
+  "reverse_image_external_message": "PixEz 無法在本機辨識出 Pixiv 作品 ID。僅在您同意將移除中繼資料並縮小後的副本依序提交給 SauceNAO 與 IQDB 時繼續。移除中繼資料不會隱藏畫面中可見的內容。若全圖沒有結果，PixEz 會再次詢問，再提交一個由您選擇的裁切區域。"
 }

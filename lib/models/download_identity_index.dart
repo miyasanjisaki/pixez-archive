@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:path/path.dart';
+import 'package:pixez/utils/image_perceptual_hash.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 const String _identityTable = 'download_image_identity';
@@ -10,6 +11,17 @@ const String _columnIllustId = 'illust_id';
 const String _columnPageIndex = 'page_index';
 const String _columnFileName = 'file_name';
 const String _columnUpdatedAt = 'updated_at';
+const String _columnDifferenceHash = 'dhash';
+
+/// Computes exact and near-duplicate fingerprints in one background isolate.
+///
+/// The map is isolate-sendable. A `null` dHash means the image was unsupported
+/// or exceeded the conservative decode bounds; exact SHA-256 remains valid.
+Map<String, String?> computeDownloadImageFingerprints(Uint8List bytes) =>
+    <String, String?>{
+      _columnDigest: computeImageSha256(bytes),
+      _columnDifferenceHash: tryComputeDifferenceHash(bytes),
+    };
 
 /// Computes the exact-content identity used for locally downloaded images.
 ///
@@ -23,6 +35,7 @@ class DownloadImageIdentity {
   final int pageIndex;
   final String? fileName;
   final int updatedAt;
+  final String? differenceHash;
 
   const DownloadImageIdentity({
     required this.sha256,
@@ -30,6 +43,7 @@ class DownloadImageIdentity {
     required this.pageIndex,
     required this.fileName,
     required this.updatedAt,
+    this.differenceHash,
   });
 
   factory DownloadImageIdentity.fromMap(Map<String, Object?> map) {
@@ -39,8 +53,21 @@ class DownloadImageIdentity {
       pageIndex: map[_columnPageIndex]! as int,
       fileName: map[_columnFileName] as String?,
       updatedAt: map[_columnUpdatedAt]! as int,
+      differenceHash: map[_columnDifferenceHash] as String?,
     );
   }
+}
+
+class DownloadPerceptualIdentityMatch {
+  final DownloadImageIdentity identity;
+  final int distance;
+
+  const DownloadPerceptualIdentityMatch({
+    required this.identity,
+    required this.distance,
+  });
+
+  double get similarity => 1 - distance / differenceHashBitCount;
 }
 
 /// A bounded, app-local mapping from exact image bytes to their Pixiv source.
@@ -68,7 +95,7 @@ class DownloadIdentityIndex {
     final databasesPath = await getDatabasesPath();
     return openDatabase(
       join(databasesPath, databaseName),
-      version: 1,
+      version: 2,
       onCreate: (database, version) async {
         await database.execute('''
 CREATE TABLE $_identityTable (
@@ -76,13 +103,22 @@ CREATE TABLE $_identityTable (
   $_columnIllustId INTEGER NOT NULL,
   $_columnPageIndex INTEGER NOT NULL,
   $_columnFileName TEXT,
-  $_columnUpdatedAt INTEGER NOT NULL
+  $_columnUpdatedAt INTEGER NOT NULL,
+  $_columnDifferenceHash TEXT
 )
 ''');
         await database.execute(
           'CREATE INDEX download_image_identity_updated_at '
           'ON $_identityTable ($_columnUpdatedAt DESC)',
         );
+      },
+      onUpgrade: (database, oldVersion, newVersion) async {
+        if (oldVersion < 2) {
+          await database.execute(
+            'ALTER TABLE $_identityTable '
+            'ADD $_columnDifferenceHash TEXT',
+          );
+        }
       },
     );
   }
@@ -92,6 +128,7 @@ CREATE TABLE $_identityTable (
     required int illustId,
     required int pageIndex,
     String? fileName,
+    String? differenceHash,
   }) async {
     if (illustId <= 0 || pageIndex < 0 || !_isSha256(sha256)) return;
     final database = await _database();
@@ -105,6 +142,10 @@ CREATE TABLE $_identityTable (
         _columnPageIndex: pageIndex,
         _columnFileName: fileName,
         _columnUpdatedAt: updatedAt,
+        _columnDifferenceHash:
+            differenceHash != null && isValidDifferenceHash(differenceHash)
+            ? differenceHash.trim().toLowerCase()
+            : null,
       }, conflictAlgorithm: ConflictAlgorithm.replace);
       await transaction.rawDelete(
         '''
@@ -126,12 +167,14 @@ WHERE $_columnDigest NOT IN (
     required int illustId,
     required int pageIndex,
     String? fileName,
+    String? differenceHash,
   }) {
     return rememberDigest(
       sha256: computeImageSha256(bytes),
       illustId: illustId,
       pageIndex: pageIndex,
       fileName: fileName,
+      differenceHash: differenceHash,
     );
   }
 
@@ -150,6 +193,59 @@ WHERE $_columnDigest NOT IN (
 
   Future<DownloadImageIdentity?> findBytes(Uint8List bytes) {
     return findDigest(computeImageSha256(bytes));
+  }
+
+  /// Finds one unambiguous local near-duplicate by 64-bit dHash.
+  ///
+  /// This is intentionally limited to resized/re-encoded copies. It is not a
+  /// crop or partial-image search. Thresholds are required so the caller owns
+  /// their calibration; a close runner-up from another illustration returns
+  /// `null` rather than guessing.
+  Future<DownloadPerceptualIdentityMatch?> findPerceptualHash(
+    String differenceHash, {
+    required int maximumDistance,
+    required int minimumDistanceGap,
+  }) async {
+    if (!isValidDifferenceHash(differenceHash)) return null;
+    final database = await _database();
+    final rows = await database.query(
+      _identityTable,
+      where: '$_columnDifferenceHash IS NOT NULL',
+      orderBy: '$_columnUpdatedAt DESC',
+      limit: maximumEntries,
+    );
+    final identities = rows.map(DownloadImageIdentity.fromMap).toList();
+    final match = findUniqueDifferenceHashMatch<int>(
+      differenceHash,
+      identities.map(
+        (identity) => DifferenceHashReference<int>(
+          hash: identity.differenceHash!,
+          value: identity.illustId,
+        ),
+      ),
+      maximumDistance: maximumDistance,
+      minimumDistanceGap: minimumDistanceGap,
+    );
+    if (match == null) return null;
+
+    DownloadImageIdentity? bestIdentity;
+    var bestDistance = differenceHashBitCount + 1;
+    for (final identity in identities) {
+      if (identity.illustId != match.value) continue;
+      final distance = differenceHashDistance(
+        differenceHash,
+        identity.differenceHash!,
+      );
+      if (distance < bestDistance) {
+        bestIdentity = identity;
+        bestDistance = distance;
+      }
+    }
+    if (bestIdentity == null) return null;
+    return DownloadPerceptualIdentityMatch(
+      identity: bestIdentity,
+      distance: bestDistance,
+    );
   }
 
   Future<void> close() async {

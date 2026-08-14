@@ -22,16 +22,33 @@ class SauceNaoPixivCandidate {
   });
 }
 
+class SauceNaoExternalCandidate {
+  final double similarity;
+  final String sourceUrl;
+  final String? title;
+
+  const SauceNaoExternalCandidate({
+    required this.similarity,
+    required this.sourceUrl,
+    this.title,
+  });
+}
+
 class SauceNaoPixivResults {
   final List<SauceNaoPixivCandidate> exactMatches;
   final List<SauceNaoPixivCandidate> possibleMatches;
+  final List<SauceNaoExternalCandidate> externalMatches;
 
   const SauceNaoPixivResults({
     required this.exactMatches,
     required this.possibleMatches,
+    this.externalMatches = const [],
   });
 
-  bool get isEmpty => exactMatches.isEmpty && possibleMatches.isEmpty;
+  bool get isEmpty =>
+      exactMatches.isEmpty &&
+      possibleMatches.isEmpty &&
+      externalMatches.isEmpty;
 }
 
 /// Parses SauceNAO result cards into auto-openable and confirmable Pixiv
@@ -41,7 +58,7 @@ class SauceNaoPixivResults {
 SauceNaoPixivResults parseSauceNaoPixivResults(
   String html, {
   double exactSimilarity = 80,
-  double possibleSimilarity = 60,
+  double possibleSimilarity = 35,
 }) {
   if (possibleSimilarity > exactSimilarity) {
     throw ArgumentError.value(
@@ -57,6 +74,7 @@ SauceNaoPixivResults parseSauceNaoPixivResults(
   if (blocks.isEmpty) blocks = document.querySelectorAll('.resulttable');
 
   final bestById = <int, SauceNaoPixivCandidate>{};
+  final bestExternalByUrl = <String, SauceNaoExternalCandidate>{};
   for (final block in blocks) {
     final similarityText =
         block.querySelector('.resultsimilarityinfo')?.text ?? block.text;
@@ -66,10 +84,13 @@ SauceNaoPixivResults parseSauceNaoPixivResults(
     final similarity = double.tryParse(similarityMatch?.group(1) ?? '');
     if (similarity == null || similarity < possibleSimilarity) continue;
 
+    var foundExplicitPixiv = false;
     for (final anchor in block.querySelectorAll('a[href]')) {
       final url = anchor.attributes['href'] ?? '';
       if (!_isExplicitPixivUrl(url)) continue;
       final ids = extractPixivIllustIdsFromText(url);
+      if (ids.isEmpty) continue;
+      foundExplicitPixiv = true;
       for (final illustId in ids) {
         final candidate = SauceNaoPixivCandidate(
           illustId: illustId,
@@ -80,6 +101,39 @@ SauceNaoPixivResults parseSauceNaoPixivResults(
         if (previous == null || previous.similarity < similarity) {
           bestById[illustId] = candidate;
         }
+      }
+    }
+    if (!foundExplicitPixiv) {
+      final labelledIds = _extractLabelledPixivIds(block.text);
+      for (final illustId in labelledIds) {
+        foundExplicitPixiv = true;
+        final candidate = SauceNaoPixivCandidate(
+          illustId: illustId,
+          similarity: similarity,
+          pixivUrl: 'https://www.pixiv.net/artworks/$illustId',
+        );
+        final previous = bestById[illustId];
+        if (previous == null || previous.similarity < similarity) {
+          bestById[illustId] = candidate;
+        }
+      }
+    }
+    if (!foundExplicitPixiv && similarity >= 45) {
+      for (final anchor in block.querySelectorAll('a[href]')) {
+        final url = _normalizeExternalResultUrl(
+          anchor.attributes['href'] ?? '',
+        );
+        if (url == null) continue;
+        final candidate = SauceNaoExternalCandidate(
+          similarity: similarity,
+          sourceUrl: url,
+          title: anchor.text.trim().isEmpty ? null : anchor.text.trim(),
+        );
+        final previous = bestExternalByUrl[url];
+        if (previous == null || previous.similarity < similarity) {
+          bestExternalByUrl[url] = candidate;
+        }
+        break;
       }
     }
   }
@@ -97,7 +151,25 @@ SauceNaoPixivResults parseSauceNaoPixivResults(
               candidate.similarity < exactSimilarity,
         )
         .toList(growable: false),
+    externalMatches:
+        (bestExternalByUrl.values.toList()
+              ..sort((a, b) => b.similarity.compareTo(a.similarity)))
+            .toList(growable: false),
   );
+}
+
+List<int> _extractLabelledPixivIds(String value) {
+  final ids = <int>{};
+  final pattern = RegExp(
+    r'(?:pixiv[\s_-]*(?:illust(?:ration)?[\s_-]*)?(?:id)?|'
+    r'illust[\s_-]*id)\s*[:#=_-]?\s*([0-9]{5,12})',
+    caseSensitive: false,
+  );
+  for (final match in pattern.allMatches(value)) {
+    final id = int.tryParse(match.group(1) ?? '');
+    if (id != null && id > 0) ids.add(id);
+  }
+  return ids.toList(growable: false);
 }
 
 /// Compatibility wrapper for call sites that only want exact matches.
@@ -122,11 +194,33 @@ bool _isExplicitPixivUrl(String value) {
       host.endsWith('.pximg.net');
 }
 
+String? _normalizeExternalResultUrl(String value) {
+  final decoded = value.replaceAll('&amp;', '&').trim();
+  if (decoded.isEmpty || decoded.startsWith('#')) return null;
+  final absolute = decoded.startsWith('//') ? 'https:$decoded' : decoded;
+  final uri = Uri.tryParse(absolute);
+  if (uri == null || !(uri.scheme == 'https' || uri.scheme == 'http')) {
+    return null;
+  }
+  final host = uri.host.toLowerCase();
+  if (host.isEmpty ||
+      host == 'saucenao.com' ||
+      host.endsWith('.saucenao.com')) {
+    return null;
+  }
+  return uri.toString();
+}
+
 void _throwForServicePage(String html) {
   final lower = html.toLowerCase();
   const markers = <String, String>{
     'captcha': 'SauceNAO requires verification',
     'verify you are human': 'SauceNAO requires verification',
+    'just a moment': 'SauceNAO browser verification is required',
+    'enable javascript and cookies':
+        'SauceNAO browser verification is required',
+    'cdn-cgi/challenge': 'SauceNAO browser verification is required',
+    'cf-chl-': 'SauceNAO browser verification is required',
     'daily limit exceeded': 'SauceNAO daily search limit reached',
     'exceeded your daily limit': 'SauceNAO daily search limit reached',
     'search limit exceeded': 'SauceNAO search limit reached',

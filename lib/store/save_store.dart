@@ -406,15 +406,19 @@ abstract class _SaveStoreBase with Store {
     if (!saved || illusts.id <= 0) return saved;
 
     try {
-      final digest = await compute(computeImageSha256, uint8list);
+      final fingerprints = await compute(
+        computeDownloadImageFingerprints,
+        uint8list,
+      );
       await downloadIdentityIndex.rememberDigest(
-        sha256: digest,
+        sha256: fingerprints['sha256']!,
         illustId: illusts.id,
         pageIndex:
             pageIndex ??
             extractPixivPageIndex(hints: <String?>[sourceUrl, fileName]) ??
             0,
         fileName: fileName,
+        differenceHash: fingerprints['dhash'],
       );
     } catch (error, stackTrace) {
       // Saving the user's file succeeded; a best-effort search index failure

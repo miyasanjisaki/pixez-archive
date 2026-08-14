@@ -453,7 +453,9 @@ class _PixEzSearchBoxState extends State<StatefulWidget> {
   void _searchByImage(SauceSearchEvent event) {
     if (!mounted) return;
     if (event.illustIds.isEmpty) {
-      BotToast.showText(text: I18n.ofContext().no_result);
+      BotToast.showText(
+        text: _sauceStore.lastError.value ?? I18n.ofContext().no_result,
+      );
       return;
     }
 

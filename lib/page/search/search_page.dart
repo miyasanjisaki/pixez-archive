@@ -79,7 +79,9 @@ class _SearchPageState extends State<SearchPage>
           ),
         );
       } else if (_sauceStore.phase.value == SauceSearchPhase.noResult) {
-        BotToast.showText(text: I18n.ofContext().no_result);
+        BotToast.showText(
+          text: _sauceStore.lastError.value ?? I18n.ofContext().no_result,
+        );
       }
     });
     super.initState();

@@ -117,6 +117,9 @@ class _SauceNaoPageState extends State<SauceNaoPage> {
                     child: ListTile(
                       leading: const Icon(Icons.search_off),
                       title: Text(I18n.of(context).no_result),
+                      subtitle: _store.lastError.value == null
+                          ? null
+                          : Text(_store.lastError.value!),
                     ),
                   );
                 }

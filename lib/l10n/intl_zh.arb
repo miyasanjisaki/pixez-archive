@@ -360,6 +360,6 @@
   "novel_bookmarks": "收藏数",
   "novel_views": "阅读数",
   "novel_likes": "点赞",
-  "reverse_image_external_title": "继续使用 SauceNAO？",
-  "reverse_image_external_message": "PixEz 未能在本地识别出 Pixiv 作品 ID。仅在您同意将去除元数据并缩小后的图片副本上传到第三方 SauceNAO 服务时继续。"
+  "reverse_image_external_title": "继续使用外部识图？",
+  "reverse_image_external_message": "PixEz 未能在本地识别出 Pixiv 作品 ID。仅在您同意将去除元数据并缩小后的副本先后提交给 SauceNAO 与 IQDB 时继续。去除元数据不会隐藏画面中可见的内容。若全图没有结果，PixEz 会再次询问，再提交一个由您选择的裁剪区域。"
 }

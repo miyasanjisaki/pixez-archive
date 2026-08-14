@@ -360,6 +360,6 @@
   "novel_bookmarks": "Bookmarks",
   "novel_views": "Reads",
   "novel_likes": "Likes",
-  "reverse_image_external_title": "Continue with SauceNAO?",
-  "reverse_image_external_message": "PixEz could not identify a Pixiv ID locally. Continue only if you agree to upload a resized, metadata-free copy to the third-party SauceNAO service."
+  "reverse_image_external_title": "Continue with external image search?",
+  "reverse_image_external_message": "PixEz could not identify a Pixiv ID locally. Continue only if you agree to send a resized, metadata-free copy first to SauceNAO and then to IQDB. Removing metadata does not hide the visible picture content. If the full image has no result, PixEz will ask before sending one crop you select."
 }

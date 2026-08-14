@@ -64,7 +64,9 @@ class _SearchSuggestionPageState extends State<SearchSuggestionPage> {
           title: Text(I18n.of(context).search),
         );
       } else if (_sauceStore.phase.value == SauceSearchPhase.noResult) {
-        BotToast.showText(text: I18n.ofContext().no_result);
+        BotToast.showText(
+          text: _sauceStore.lastError.value ?? I18n.ofContext().no_result,
+        );
       }
     });
     var query = widget.preword ?? '';
