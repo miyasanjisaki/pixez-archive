@@ -48,12 +48,14 @@ void main() {
       required double similarity,
       required String provider,
       required ReverseImageProbeKind probe,
+      String? thumbnailUrl,
     }) => ReverseImageProviderHit(
       providerId: provider,
       probe: probe,
       illustId: id,
       similarity: similarity,
       sourceUrl: 'https://www.pixiv.net/artworks/$id',
+      thumbnailUrl: thumbnailUrl,
     );
 
     test('orders by agreement but preserves the raw best similarity', () {
@@ -127,6 +129,28 @@ void main() {
 
       expect(result.rankScore, greaterThanOrEqualTo(80));
       expect(result.canAutoOpen, isFalse);
+    });
+
+    test('preserves nullable provider thumbnails in aggregated evidence', () {
+      const thumbnailUrl = 'https://cdn.example/thumbs/10.jpg';
+      final result = aggregateReverseImageHits([
+        hit(
+          id: 10,
+          similarity: 77,
+          provider: 'saucenao',
+          probe: ReverseImageProbeKind.full,
+          thumbnailUrl: thumbnailUrl,
+        ),
+        hit(
+          id: 10,
+          similarity: 70,
+          provider: 'iqdb',
+          probe: ReverseImageProbeKind.center,
+        ),
+      ]).single;
+
+      expect(result.evidence.first.thumbnailUrl, thumbnailUrl);
+      expect(result.evidence.last.thumbnailUrl, isNull);
     });
 
     test('does not auto-open two nearly tied high-confidence works', () {

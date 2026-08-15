@@ -14,12 +14,9 @@
  *
  */
 
-import 'dart:async';
-
 import 'package:flutter/material.dart';
-import 'package:flutter_mobx/flutter_mobx.dart';
 import 'package:pixez/i18n.dart';
-import 'package:pixez/page/picture/illust_lighting_page.dart';
+import 'package:pixez/page/saucenao/reverse_image_search_panel.dart';
 import 'package:pixez/page/saucenao/sauce_store.dart';
 
 class SauceNaoPage extends StatefulWidget {
@@ -32,12 +29,10 @@ class SauceNaoPage extends StatefulWidget {
 }
 
 class _SauceNaoPageState extends State<SauceNaoPage> {
-  SauceStore _store = SauceStore();
-  StreamSubscription<SauceSearchEvent>? _sauceSubscription;
+  final SauceStore _store = SauceStore();
 
   @override
   void dispose() {
-    _sauceSubscription?.cancel();
     _store.dispose();
     super.dispose();
   }
@@ -45,128 +40,24 @@ class _SauceNaoPageState extends State<SauceNaoPage> {
   @override
   void initState() {
     super.initState();
-    _sauceSubscription = _store.observableStream.listen((event) {
-      if (!mounted) return;
-      if (event.illustIds.isNotEmpty) {
-        Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (context) => PageView(
-              children: event.illustIds
-                  .map((element) => IllustLightingPage(id: element))
-                  .toList(),
-            ),
-          ),
-        );
-      }
-    });
     if (widget.path != null) {
-      _store.findImage(context: context, path: widget.path);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _store.findImage(
+          context: context,
+          path: widget.path,
+          inlineResults: true,
+          skipBookmarkPrompt: true,
+        );
+      });
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      floatingActionButton: FloatingActionButton(
-        child: Icon(Icons.add_photo_alternate),
-        backgroundColor: Theme.of(context).colorScheme.secondary,
-        onPressed: () {
-          _store.findImage(context: context);
-        },
-      ),
-      appBar: AppBar(title: Icon(Icons.dashboard)),
-      body: Container(
-        child: ListView(
-          children: <Widget>[
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 16.0),
-                child: Center(child: Text('SauceNao')),
-              ),
-            ),
-            Observer(
-              builder: (_) {
-                final phase = _store.phase.value;
-                if (phase.isBusy) {
-                  final label = phase == SauceSearchPhase.uploading
-                      ? I18n.of(context).uploading
-                      : I18n.of(context).parsing;
-                  return Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        children: [
-                          const LinearProgressIndicator(),
-                          const SizedBox(height: 12),
-                          Text(label),
-                        ],
-                      ),
-                    ),
-                  );
-                }
-                if (phase == SauceSearchPhase.error) {
-                  return Card(
-                    child: ListTile(
-                      leading: const Icon(Icons.error_outline),
-                      title: Text(_store.lastError.value ?? 'Search failed'),
-                    ),
-                  );
-                }
-                if (phase == SauceSearchPhase.noResult) {
-                  return Card(
-                    child: ListTile(
-                      leading: const Icon(Icons.search_off),
-                      title: Text(I18n.of(context).no_result),
-                      subtitle: _store.lastError.value == null
-                          ? null
-                          : Text(_store.lastError.value!),
-                    ),
-                  );
-                }
-                if (_store.notStart) {
-                  return Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(8.0),
-                      child: Text(widget.path ?? ""),
-                    ),
-                  );
-                }
-                return InkWell(
-                  child: Card(
-                    child: _store.results.isNotEmpty
-                        ? Padding(
-                            padding: const EdgeInsets.all(8.0),
-                            child: Text(
-                              I18n.of(context).tap_to_show_results(
-                                _store.results.length.toString(),
-                              ),
-                            ),
-                          )
-                        : Container(
-                            child: Image.asset('assets/images/nine.jpg'),
-                          ),
-                  ),
-                  onTap: () {
-                    if (_store.results.isNotEmpty) {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (context) => PageView(
-                            children: _store.results
-                                .map(
-                                  (element) => IllustLightingPage(id: element),
-                                )
-                                .toList(),
-                          ),
-                        ),
-                      );
-                    }
-                  },
-                );
-              },
-            ),
-          ],
-        ),
-      ),
+      appBar: AppBar(title: Text(I18n.of(context).image_search)),
+      body: ReverseImageSearchPanel(store: _store),
     );
   }
 }

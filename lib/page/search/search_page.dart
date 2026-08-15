@@ -14,20 +14,17 @@
  *
  */
 
-import 'dart:async';
 import 'dart:math';
-import 'package:bot_toast/bot_toast.dart';
 import 'package:flutter/material.dart' hide SearchBar;
 import 'package:flutter_mobx/flutter_mobx.dart';
 import 'package:pixez/component/pixiv_image.dart';
 import 'package:pixez/i18n.dart';
 import 'package:pixez/main.dart';
 import 'package:pixez/models/tags.dart';
-import 'package:pixez/page/picture/illust_lighting_page.dart';
+import 'package:pixez/page/saucenao/reverse_image_search_panel.dart';
 import 'package:pixez/page/saucenao/sauce_store.dart';
 import 'package:pixez/page/search/result_page.dart';
 import 'package:pixez/page/search/search_bar.dart';
-import 'package:pixez/page/search/suggest/search_suggestion_page.dart';
 import 'package:pixez/page/search/trend_tags_store.dart';
 import 'package:pixez/utils/haptic_util.dart';
 
@@ -45,7 +42,7 @@ class _SearchPageState extends State<SearchPage>
   late AnimationController _animationController;
   late Animation<double> animation;
   late SauceStore _sauceStore;
-  StreamSubscription<SauceSearchEvent>? _sauceSubscription;
+  int _searchSection = 0;
 
   @override
   void didChangeDependencies() {
@@ -62,26 +59,14 @@ class _SearchPageState extends State<SearchPage>
     animation = Tween(begin: 0.0, end: 0.25).animate(_animationController);
 
     _trendTagsStore = TrendTagsStore();
-    _tabController = TabController(length: 3, vsync: this);
-    _sauceStore = SauceStore();
-    _sauceSubscription = _sauceStore.observableStream.listen((event) {
-      if (!mounted) return;
-      if (event.illustIds.isNotEmpty) {
-        Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (context) => PageView(
-              children: event.illustIds
-                  .map((element) => IllustLightingPage(id: element))
-                  .toList(),
-            ),
-          ),
-        );
-      } else if (_sauceStore.phase.value == SauceSearchPhase.noResult) {
-        BotToast.showText(
-          text: _sauceStore.lastError.value ?? I18n.ofContext().no_result,
-        );
+    _tabController = TabController(length: 2, vsync: this);
+    _tabController.addListener(() {
+      if (!mounted || _tabController.indexIsChanging) return;
+      if (_searchSection != _tabController.index) {
+        setState(() => _searchSection = _tabController.index);
       }
     });
+    _sauceStore = SauceStore();
     super.initState();
     tagHistoryStore.fetch();
     _trendTagsStore.fetch();
@@ -89,7 +74,6 @@ class _SearchPageState extends State<SearchPage>
 
   @override
   void dispose() {
-    _sauceSubscription?.cancel();
     _animationController.dispose();
     _tabController.dispose();
     _sauceStore.dispose();
@@ -127,53 +111,66 @@ class _SearchPageState extends State<SearchPage>
     super.build(context);
     return LayoutBuilder(
       builder: (context, snapshot) {
-        return Observer(
-          builder: (_) {
-            if (accountStore.now != null)
-              return NestedScrollView(
-                body: _buildContent(context, snapshot),
-                headerSliverBuilder:
-                    (BuildContext context, bool innerBoxIsScrolled) {
-                      return [
-                        SliverToBoxAdapter(
-                          child: Container(
-                            height: MediaQuery.of(context).padding.top,
-                          ),
-                        ),
-                        SliverToBoxAdapter(
-                          child: SearchBar(
-                            imageSearchBusy: _sauceStore.phase.value.isBusy,
-                            onSaucenao: () =>
-                                _sauceStore.findImage(context: context),
-                          ),
-                        ),
-                      ];
-                    },
-              );
-            return Column(
-              children: <Widget>[
-                AppBar(
-                  automaticallyImplyLeading: false,
-                  title: Text(
-                    I18n.of(context).search,
-                    style: Theme.of(context).textTheme.titleLarge,
-                  ),
-                  actions: <Widget>[
-                    IconButton(
-                      icon: Icon(Icons.search),
-                      onPressed: () {
-                        Navigator.of(context, rootNavigator: true).push(
-                          MaterialPageRoute(
-                            builder: (context) => SearchSuggestionPage(),
-                          ),
-                        );
-                      },
+        return Column(
+          children: [
+            SafeArea(
+              bottom: false,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+                child: TabBar(
+                  controller: _tabController,
+                  onTap: (index) => setState(() => _searchSection = index),
+                  tabs: [
+                    Tab(
+                      icon: const Icon(Icons.tag),
+                      text: I18n.of(context).tag,
+                    ),
+                    Tab(
+                      icon: const Icon(Icons.image_search),
+                      text: I18n.of(context).image_search,
                     ),
                   ],
                 ),
-              ],
-            );
-          },
+              ),
+            ),
+            Expanded(
+              child: IndexedStack(
+                index: _searchSection,
+                children: [
+                  _buildTagSearchSection(context, snapshot),
+                  ReverseImageSearchPanel(store: _sauceStore),
+                ],
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildTagSearchSection(BuildContext context, BoxConstraints snapshot) {
+    return Observer(
+      builder: (_) {
+        if (accountStore.now != null) {
+          return NestedScrollView(
+            body: _buildContent(context, snapshot),
+            headerSliverBuilder:
+                (BuildContext context, bool innerBoxIsScrolled) => [
+                  SliverToBoxAdapter(
+                    child: SearchBar(
+                      onSaucenao: () => _tabController.animateTo(1),
+                    ),
+                  ),
+                ],
+          );
+        }
+        return Column(
+          children: <Widget>[
+            SearchBar(onSaucenao: () => _tabController.animateTo(1)),
+            Expanded(
+              child: Center(child: Text(I18n.of(context).login_message)),
+            ),
+          ],
         );
       },
     );

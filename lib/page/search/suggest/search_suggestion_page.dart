@@ -14,16 +14,12 @@
  *
  */
 
-import 'dart:async';
-
-import 'package:bot_toast/bot_toast.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_mobx/flutter_mobx.dart';
 import 'package:pixez/er/leader.dart';
 import 'package:pixez/i18n.dart';
-import 'package:pixez/page/picture/illust_lighting_page.dart';
-import 'package:pixez/page/saucenao/sauce_store.dart';
+import 'package:pixez/page/saucenao/saucenao_page.dart';
 import 'package:pixez/page/search/result_page.dart';
 import 'package:pixez/page/search/suggest/suggestion_store.dart';
 import 'package:pixez/page/soup/soup_page.dart';
@@ -43,8 +39,6 @@ class SearchSuggestionPage extends StatefulWidget {
 class _SearchSuggestionPageState extends State<SearchSuggestionPage> {
   late TextEditingController _filter;
   late SuggestionStore _suggestionStore;
-  late SauceStore _sauceStore;
-  StreamSubscription<SauceSearchEvent>? _sauceSubscription;
   FocusNode focusNode = FocusNode();
   final tagGroup = [];
   bool idV = false;
@@ -53,25 +47,6 @@ class _SearchSuggestionPageState extends State<SearchSuggestionPage> {
   void initState() {
     idV = widget.preword != null && int.tryParse(widget.preword!) != null;
     _suggestionStore = SuggestionStore();
-    _sauceStore = SauceStore();
-    _sauceSubscription = _sauceStore.observableStream.listen((event) {
-      if (!mounted) return;
-      if (event.illustIds.isNotEmpty) {
-        Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (context) => PageView(
-              children: event.illustIds
-                  .map((element) => IllustLightingPage(id: element))
-                  .toList(),
-            ),
-          ),
-        );
-      } else if (_sauceStore.phase.value == SauceSearchPhase.noResult) {
-        BotToast.showText(
-          text: _sauceStore.lastError.value ?? I18n.ofContext().no_result,
-        );
-      }
-    });
     var query = widget.preword ?? '';
     _filter = TextEditingController(text: query);
     var tags = query
@@ -84,9 +59,7 @@ class _SearchSuggestionPageState extends State<SearchSuggestionPage> {
 
   @override
   void dispose() {
-    _sauceSubscription?.cancel();
     _filter.dispose();
-    _sauceStore.dispose();
     super.dispose();
   }
 
@@ -97,17 +70,10 @@ class _SearchSuggestionPageState extends State<SearchSuggestionPage> {
         return Scaffold(
           appBar: _buildAppBar(context),
           floatingActionButton: FloatingActionButton(
-            onPressed: _sauceStore.phase.value.isBusy
-                ? null
-                : () async {
-                    _sauceStore.findImage(context: context);
-                  },
-            child: _sauceStore.phase.value.isBusy
-                ? const SizedBox.square(
-                    dimension: 24,
-                    child: CircularProgressIndicator(strokeWidth: 2.5),
-                  )
-                : const Icon(Icons.add_photo_alternate),
+            onPressed: () => Navigator.of(
+              context,
+            ).push(MaterialPageRoute(builder: (_) => const SauceNaoPage())),
+            child: const Icon(Icons.add_photo_alternate),
           ),
           body: Container(
             child: Column(

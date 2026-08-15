@@ -40,7 +40,13 @@ class IqdbSearchProvider implements ReverseImageSearchProvider {
   String get id => 'iqdb';
 
   @override
-  Future<ReverseImageProviderResponse> search(ReverseImageQuery query) async {
+  Future<ReverseImageProviderResponse> search(ReverseImageQuery query) =>
+      searchWithCancel(query);
+
+  Future<ReverseImageProviderResponse> searchWithCancel(
+    ReverseImageQuery query, {
+    CancelToken? cancelToken,
+  }) async {
     if (query.bytes.length > maxInputBytes) {
       return const ReverseImageProviderResponse(
         serviceMessage: 'IQDB image exceeds the 8 MB limit',
@@ -62,7 +68,11 @@ class IqdbSearchProvider implements ReverseImageSearchProvider {
     );
 
     try {
-      final response = await dio.post<dynamic>('/', data: form);
+      final response = await dio.post<dynamic>(
+        '/',
+        data: form,
+        cancelToken: cancelToken,
+      );
       final html = switch (response.data) {
         String value => value,
         List<int> value => utf8.decode(value, allowMalformed: true),
@@ -74,6 +84,11 @@ class IqdbSearchProvider implements ReverseImageSearchProvider {
     } on IqdbResponseException catch (error) {
       return ReverseImageProviderResponse(serviceMessage: error.message);
     } on DioException catch (error) {
+      if (CancelToken.isCancel(error)) {
+        return const ReverseImageProviderResponse(
+          serviceMessage: 'IQDB search cancelled',
+        );
+      }
       final status = error.response?.statusCode;
       return ReverseImageProviderResponse(
         rateLimited: status == 429,

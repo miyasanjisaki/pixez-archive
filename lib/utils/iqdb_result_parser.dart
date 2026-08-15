@@ -1,6 +1,9 @@
+import 'package:html/dom.dart' show Element;
 import 'package:html/parser.dart' show parse;
 import 'package:pixez/utils/pixiv_image_identity.dart';
 import 'package:pixez/utils/reverse_image_search.dart';
+
+final Uri _iqdbOrigin = Uri.parse('https://safe.iqdb.org/');
 
 class IqdbResponseException implements Exception {
   final String message;
@@ -72,6 +75,7 @@ List<ReverseImageProviderHit> parseIqdbResults(
         ? extractPixivIllustId(hints: <String?>[sourceUrl])
         : _extractLabelledPixivId(labelledIdentityText.toString());
     if (illustId == null && similarity < 45) continue;
+    final thumbnailUrl = _extractThumbnailUrl(table);
     hits.add(
       ReverseImageProviderHit(
         providerId: 'iqdb',
@@ -80,6 +84,7 @@ List<ReverseImageProviderHit> parseIqdbResults(
         similarity: similarity,
         sourceUrl: sourceUrl,
         title: table.querySelector('th')?.text.trim(),
+        thumbnailUrl: thumbnailUrl,
       ),
     );
   }
@@ -93,6 +98,49 @@ List<ReverseImageProviderHit> parseIqdbResults(
   }
   return bestByUrl.values.toList(growable: false)
     ..sort((a, b) => b.similarity.compareTo(a.similarity));
+}
+
+String? _extractThumbnailUrl(Element table) {
+  final resultImages = table.querySelectorAll('td.image img');
+  final images = resultImages.isNotEmpty
+      ? resultImages
+      : table.querySelectorAll('img');
+  for (final image in images) {
+    for (final attribute in const <String>[
+      'data-src',
+      'data-original',
+      'src',
+    ]) {
+      final normalized = _normalizeProviderAssetUrl(
+        image.attributes[attribute] ?? '',
+        _iqdbOrigin,
+      );
+      if (normalized != null) return normalized;
+    }
+  }
+  return null;
+}
+
+String? _normalizeProviderAssetUrl(String value, Uri providerOrigin) {
+  final decoded = value.replaceAll('&amp;', '&').trim();
+  if (decoded.isEmpty || decoded.startsWith('#')) return null;
+
+  final parsed = Uri.tryParse(decoded);
+  if (parsed == null) return null;
+  final resolved = decoded.startsWith('//')
+      ? Uri.tryParse('${providerOrigin.scheme}:$decoded')
+      : parsed.hasScheme
+      ? parsed
+      : providerOrigin.resolveUri(parsed);
+  final host = resolved?.host.toLowerCase() ?? '';
+  if (resolved == null ||
+      resolved.scheme.toLowerCase() != 'https' ||
+      resolved.userInfo.isNotEmpty ||
+      (resolved.hasPort && resolved.port != 443) ||
+      !(host == 'iqdb.org' || host.endsWith('.iqdb.org'))) {
+    return null;
+  }
+  return resolved.toString();
 }
 
 bool _isExplicitPixivUrl(String value) {

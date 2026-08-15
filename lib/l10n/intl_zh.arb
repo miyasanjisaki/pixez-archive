@@ -361,5 +361,5 @@
   "novel_views": "阅读数",
   "novel_likes": "点赞",
   "reverse_image_external_title": "继续使用外部识图？",
-  "reverse_image_external_message": "PixEz 未能在本地识别出 Pixiv 作品 ID。仅在您同意将去除元数据并缩小后的副本先后提交给 SauceNAO 与 IQDB 时继续。去除元数据不会隐藏画面中可见的内容。若全图没有结果，PixEz 会再次询问，再提交一个由您选择的裁剪区域。"
+  "reverse_image_external_message": "PixEz 未能在本地识别出 Pixiv 作品 ID。仅在你同意将两份去除元数据并缩小后的副本同时分别提交给 SauceNAO 与 IQDB 时继续。两个第三方服务仍能看到画面内容。只有你主动点选某个区域时，才会额外提交该区域一次。"
 }

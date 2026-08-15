@@ -1,5 +1,8 @@
+import 'package:html/dom.dart' show Element;
 import 'package:html/parser.dart' show parse;
 import 'package:pixez/utils/pixiv_image_identity.dart';
+
+final Uri _sauceNaoOrigin = Uri.parse('https://saucenao.com/');
 
 class SauceNaoResponseException implements Exception {
   final String message;
@@ -14,11 +17,13 @@ class SauceNaoPixivCandidate {
   final int illustId;
   final double similarity;
   final String pixivUrl;
+  final String? thumbnailUrl;
 
   const SauceNaoPixivCandidate({
     required this.illustId,
     required this.similarity,
     required this.pixivUrl,
+    this.thumbnailUrl,
   });
 }
 
@@ -26,11 +31,13 @@ class SauceNaoExternalCandidate {
   final double similarity;
   final String sourceUrl;
   final String? title;
+  final String? thumbnailUrl;
 
   const SauceNaoExternalCandidate({
     required this.similarity,
     required this.sourceUrl,
     this.title,
+    this.thumbnailUrl,
   });
 }
 
@@ -83,6 +90,7 @@ SauceNaoPixivResults parseSauceNaoPixivResults(
     ).firstMatch(similarityText);
     final similarity = double.tryParse(similarityMatch?.group(1) ?? '');
     if (similarity == null || similarity < possibleSimilarity) continue;
+    final thumbnailUrl = _extractThumbnailUrl(block);
 
     var foundExplicitPixiv = false;
     for (final anchor in block.querySelectorAll('a[href]')) {
@@ -96,10 +104,18 @@ SauceNaoPixivResults parseSauceNaoPixivResults(
           illustId: illustId,
           similarity: similarity,
           pixivUrl: url,
+          thumbnailUrl: thumbnailUrl,
         );
         final previous = bestById[illustId];
         if (previous == null || previous.similarity < similarity) {
-          bestById[illustId] = candidate;
+          bestById[illustId] = _withPreviousPixivThumbnail(candidate, previous);
+        } else if (previous.thumbnailUrl == null && thumbnailUrl != null) {
+          bestById[illustId] = SauceNaoPixivCandidate(
+            illustId: previous.illustId,
+            similarity: previous.similarity,
+            pixivUrl: previous.pixivUrl,
+            thumbnailUrl: thumbnailUrl,
+          );
         }
       }
     }
@@ -111,10 +127,18 @@ SauceNaoPixivResults parseSauceNaoPixivResults(
           illustId: illustId,
           similarity: similarity,
           pixivUrl: 'https://www.pixiv.net/artworks/$illustId',
+          thumbnailUrl: thumbnailUrl,
         );
         final previous = bestById[illustId];
         if (previous == null || previous.similarity < similarity) {
-          bestById[illustId] = candidate;
+          bestById[illustId] = _withPreviousPixivThumbnail(candidate, previous);
+        } else if (previous.thumbnailUrl == null && thumbnailUrl != null) {
+          bestById[illustId] = SauceNaoPixivCandidate(
+            illustId: previous.illustId,
+            similarity: previous.similarity,
+            pixivUrl: previous.pixivUrl,
+            thumbnailUrl: thumbnailUrl,
+          );
         }
       }
     }
@@ -128,10 +152,21 @@ SauceNaoPixivResults parseSauceNaoPixivResults(
           similarity: similarity,
           sourceUrl: url,
           title: anchor.text.trim().isEmpty ? null : anchor.text.trim(),
+          thumbnailUrl: thumbnailUrl,
         );
         final previous = bestExternalByUrl[url];
         if (previous == null || previous.similarity < similarity) {
-          bestExternalByUrl[url] = candidate;
+          bestExternalByUrl[url] = _withPreviousExternalThumbnail(
+            candidate,
+            previous,
+          );
+        } else if (previous.thumbnailUrl == null && thumbnailUrl != null) {
+          bestExternalByUrl[url] = SauceNaoExternalCandidate(
+            similarity: previous.similarity,
+            sourceUrl: previous.sourceUrl,
+            title: previous.title,
+            thumbnailUrl: thumbnailUrl,
+          );
         }
         break;
       }
@@ -156,6 +191,79 @@ SauceNaoPixivResults parseSauceNaoPixivResults(
               ..sort((a, b) => b.similarity.compareTo(a.similarity)))
             .toList(growable: false),
   );
+}
+
+SauceNaoPixivCandidate _withPreviousPixivThumbnail(
+  SauceNaoPixivCandidate candidate,
+  SauceNaoPixivCandidate? previous,
+) {
+  if (candidate.thumbnailUrl != null || previous?.thumbnailUrl == null) {
+    return candidate;
+  }
+  return SauceNaoPixivCandidate(
+    illustId: candidate.illustId,
+    similarity: candidate.similarity,
+    pixivUrl: candidate.pixivUrl,
+    thumbnailUrl: previous!.thumbnailUrl,
+  );
+}
+
+SauceNaoExternalCandidate _withPreviousExternalThumbnail(
+  SauceNaoExternalCandidate candidate,
+  SauceNaoExternalCandidate? previous,
+) {
+  if (candidate.thumbnailUrl != null || previous?.thumbnailUrl == null) {
+    return candidate;
+  }
+  return SauceNaoExternalCandidate(
+    similarity: candidate.similarity,
+    sourceUrl: candidate.sourceUrl,
+    title: candidate.title,
+    thumbnailUrl: previous!.thumbnailUrl,
+  );
+}
+
+String? _extractThumbnailUrl(Element block) {
+  final resultImages = block.querySelectorAll('.resultimage img');
+  final images = resultImages.isNotEmpty
+      ? resultImages
+      : block.querySelectorAll('img');
+  for (final image in images) {
+    for (final attribute in const <String>[
+      'data-src',
+      'data-original',
+      'src',
+    ]) {
+      final normalized = _normalizeProviderAssetUrl(
+        image.attributes[attribute] ?? '',
+        _sauceNaoOrigin,
+      );
+      if (normalized != null) return normalized;
+    }
+  }
+  return null;
+}
+
+String? _normalizeProviderAssetUrl(String value, Uri providerOrigin) {
+  final decoded = value.replaceAll('&amp;', '&').trim();
+  if (decoded.isEmpty || decoded.startsWith('#')) return null;
+
+  final parsed = Uri.tryParse(decoded);
+  if (parsed == null) return null;
+  final resolved = decoded.startsWith('//')
+      ? Uri.tryParse('${providerOrigin.scheme}:$decoded')
+      : parsed.hasScheme
+      ? parsed
+      : providerOrigin.resolveUri(parsed);
+  final host = resolved?.host.toLowerCase() ?? '';
+  if (resolved == null ||
+      resolved.scheme.toLowerCase() != 'https' ||
+      resolved.userInfo.isNotEmpty ||
+      (resolved.hasPort && resolved.port != 443) ||
+      !(host == 'saucenao.com' || host.endsWith('.saucenao.com'))) {
+    return null;
+  }
+  return resolved.toString();
 }
 
 List<int> _extractLabelledPixivIds(String value) {

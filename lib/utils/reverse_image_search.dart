@@ -124,6 +124,7 @@ class ReverseImageProviderHit {
   final double similarity;
   final String sourceUrl;
   final String? title;
+  final String? thumbnailUrl;
 
   const ReverseImageProviderHit({
     required this.providerId,
@@ -132,6 +133,7 @@ class ReverseImageProviderHit {
     required this.similarity,
     required this.sourceUrl,
     this.title,
+    this.thumbnailUrl,
   });
 }
 

@@ -40,6 +40,7 @@ import 'package:pixez/utils/bookmark_visual_search.dart';
 import 'package:pixez/utils/pixiv_bookmark_visual_search.dart';
 import 'package:pixez/utils/pixiv_image_identity.dart';
 import 'package:pixez/utils/reverse_image_search.dart';
+import 'package:pixez/utils/reverse_image_session.dart';
 import 'package:pixez/utils/saucenao_result_parser.dart';
 
 part 'sauce_store.g.dart';
@@ -52,6 +53,7 @@ enum SauceSearchPhase {
   parsing,
   success,
   noResult,
+  cancelled,
   error,
 }
 
@@ -99,6 +101,14 @@ abstract class SauceStoreBase with Store {
   final IqdbSearchProvider _iqdbProvider = IqdbSearchProvider();
   final Observable<SauceSearchPhase> phase = Observable(SauceSearchPhase.idle);
   final Observable<String?> lastError = Observable(null);
+  final Observable<String?> selectedFileName = Observable(null);
+  final Observable<Uint8List?> selectedImageBytes = Observable(null);
+  final Observable<bool> searchBusy = Observable(false);
+  final ObservableList<ReverseImageSessionStep> sessionSteps =
+      ObservableList<ReverseImageSessionStep>();
+  final ObservableList<ReverseImageDisplayCandidate> sessionCandidates =
+      ObservableList<ReverseImageDisplayCandidate>();
+  final ObservableList<String> serviceMessages = ObservableList<String>();
   final StreamController<SauceSearchEvent> _streamController =
       StreamController<SauceSearchEvent>.broadcast(sync: true);
 
@@ -109,10 +119,148 @@ abstract class SauceStoreBase with Store {
 
   bool _disposed = false;
   bool _requestInProgress = false;
+  bool _inlineResults = false;
+  bool _externalUploadConfirmed = false;
+  DateTime? _sessionStartedAt;
+  DateTime? _sessionFinishedAt;
+  Uint8List? _selectedOriginBytes;
+  String? _selectedSha256;
+  Uint8List? _preparedSearchBytes;
+  String? _preparedSearchExtension;
+  final List<ReverseImageProviderHit> _sessionHits = [];
   PixivBookmarkVisualSearchController? _bookmarkSearchController;
+  BookmarkVisualSearchStatus? _lastBookmarkSearchStatus;
+  CancelToken? _externalCancelToken;
+
+  DateTime? get sessionStartedAt => _sessionStartedAt;
+
+  DateTime? get sessionFinishedAt => _sessionFinishedAt;
+
+  Duration get sessionElapsed {
+    final started = _sessionStartedAt;
+    if (started == null) return Duration.zero;
+    return (_sessionFinishedAt ?? DateTime.now()).difference(started);
+  }
+
+  bool get canSearchBookmarks =>
+      !searchBusy.value &&
+      _selectedOriginBytes != null &&
+      _selectedSha256 != null &&
+      accountStore.now != null;
+
+  bool get canRetryRegion => !searchBusy.value && _selectedOriginBytes != null;
+
+  bool get canOpenAscii2d =>
+      Platform.isAndroid &&
+      !searchBusy.value &&
+      (_preparedSearchBytes != null || _selectedOriginBytes != null);
+
+  bool get canCancelSearch =>
+      searchBusy.value && _externalCancelToken?.isCancelled == false;
+
+  void _resetSession({required bool inlineResults}) {
+    _inlineResults = inlineResults;
+    _externalUploadConfirmed = false;
+    _sessionStartedAt = DateTime.now();
+    _sessionFinishedAt = null;
+    _selectedOriginBytes = null;
+    _selectedSha256 = null;
+    _preparedSearchBytes = null;
+    _preparedSearchExtension = null;
+    _sessionHits.clear();
+    _lastBookmarkSearchStatus = null;
+    selectedFileName.value = null;
+    selectedImageBytes.value = null;
+    sessionCandidates.clear();
+    serviceMessages.clear();
+    sessionSteps
+      ..clear()
+      ..addAll(
+        ReverseImageSessionStepId.values.map(
+          (id) => ReverseImageSessionStep(
+            id: id,
+            state: ReverseImageSessionStepState.pending,
+          ),
+        ),
+      );
+  }
+
+  void _updateSessionStep(
+    ReverseImageSessionStepId id,
+    ReverseImageSessionStepState state, {
+    String? detail,
+  }) {
+    if (_disposed) return;
+    final index = sessionSteps.indexWhere((step) => step.id == id);
+    if (index < 0) return;
+    final previous = sessionSteps[index];
+    final now = DateTime.now();
+    final restarted =
+        state == ReverseImageSessionStepState.running &&
+        previous.state != ReverseImageSessionStepState.running;
+    sessionSteps[index] = previous.copyWith(
+      state: state,
+      detail: detail,
+      startedAt: restarted ? now : previous.startedAt,
+      endedAt: switch (state) {
+        ReverseImageSessionStepState.running ||
+        ReverseImageSessionStepState.pending => null,
+        _ => now,
+      },
+      clearEndedAt: state == ReverseImageSessionStepState.running,
+    );
+  }
+
+  void _replaceServiceMessages(Iterable<String> messages) {
+    serviceMessages
+      ..clear()
+      ..addAll(messages.toSet());
+  }
+
+  void _recordExternalBatch(_ExternalSearchBatch batch) {
+    _sessionHits.addAll(batch.hits);
+    final candidates = buildReverseImageDisplayCandidates(_sessionHits);
+    sessionCandidates
+      ..clear()
+      ..addAll(candidates);
+    _replaceServiceMessages(<String>[
+      ...serviceMessages,
+      ...batch.serviceMessages,
+    ]);
+  }
+
+  void _recordResolvedCandidate(
+    int illustId, {
+    required String providerId,
+    double similarity = 100,
+  }) {
+    final hit = ReverseImageProviderHit(
+      providerId: providerId,
+      probe: ReverseImageProbeKind.full,
+      illustId: illustId,
+      similarity: similarity,
+      sourceUrl: 'https://www.pixiv.net/artworks/$illustId',
+      title: 'Pixiv #$illustId',
+    );
+    _sessionHits.add(hit);
+    sessionCandidates
+      ..clear()
+      ..addAll(buildReverseImageDisplayCandidates(_sessionHits));
+    _updateSessionStep(
+      ReverseImageSessionStepId.results,
+      ReverseImageSessionStepState.succeeded,
+      detail: 'Pixiv #$illustId',
+    );
+  }
+
+  void _finishSessionClock() {
+    _sessionFinishedAt ??= DateTime.now();
+  }
 
   void dispose() {
     _disposed = true;
+    _externalCancelToken?.cancel('Image-search page disposed');
+    _externalCancelToken = null;
     _bookmarkSearchController?.dispose();
     _bookmarkSearchController = null;
     dio.close(force: true);
@@ -124,25 +272,26 @@ abstract class SauceStoreBase with Store {
     BuildContext? context,
     String? path,
     bool retry = false,
+    bool inlineResults = false,
+    bool skipBookmarkPrompt = false,
   }) async {
     if (_disposed || _requestInProgress) return null;
     _requestInProgress = true;
+    searchBusy.value = true;
 
     try {
-      results.clear();
-      lastError.value = null;
-      phase.value = path == null
-          ? SauceSearchPhase.picking
-          : SauceSearchPhase.inspecting;
-
+      final previousPhase = phase.value;
       String? pickedName;
       PlatformFile? pickedFile;
       if (path == null) {
+        // Keep the completed session visible while Android's picker is open.
+        // Cancelling "choose another image" must not erase candidates that the
+        // user may still want to inspect.
+        phase.value = SauceSearchPhase.picking;
         pickedFile = await _pickImage();
         if (_disposed) return null;
         if (pickedFile == null) {
-          notStart = true;
-          phase.value = SauceSearchPhase.idle;
+          phase.value = previousPhase;
           return null;
         }
         // PlatformFile.name is the provider DISPLAY_NAME. Do not infer image
@@ -153,15 +302,31 @@ abstract class SauceStoreBase with Store {
       } else {
         pickedName = _lastPathSegment(path);
       }
+
+      _resetSession(inlineResults: inlineResults);
+      results.clear();
+      lastError.value = null;
+      phase.value = SauceSearchPhase.inspecting;
+      _updateSessionStep(
+        ReverseImageSessionStepId.pick,
+        ReverseImageSessionStepState.running,
+        detail: pickedFile == null ? 'Shared image received' : 'Image selected',
+      );
       final selectedPath = path;
+      selectedFileName.value = pickedName;
+      _updateSessionStep(
+        ReverseImageSessionStepId.pick,
+        ReverseImageSessionStepState.succeeded,
+        detail: pickedName,
+      );
+      _updateSessionStep(
+        ReverseImageSessionStepId.localIdentity,
+        ReverseImageSessionStepState.running,
+        detail: 'Checking filename, metadata and local fingerprints',
+      );
       notStart = false;
 
       var localId = extractPixivIllustId(hints: [pickedName, selectedPath]);
-      if (localId != null) {
-        LPrinter.d('Reverse image search resolved Pixiv ID locally: $localId');
-        BotToast.showText(text: 'Pixiv ID: $localId');
-        return _finish([localId], matchedLocally: true);
-      }
 
       // Completed task rows predate the content-hash index. Treat a unique
       // filename match only as a user-confirmed hint after stronger exact
@@ -189,6 +354,20 @@ abstract class SauceStoreBase with Store {
         _fail('Image is too large (maximum 32 MB)');
         return null;
       }
+      _selectedOriginBytes = originImageBytes;
+
+      if (localId != null) {
+        await _ensurePreparedSearchImage(originImageBytes);
+        if (_disposed) return null;
+        LPrinter.d('Reverse image search resolved Pixiv ID locally: $localId');
+        BotToast.showText(text: 'Pixiv ID: $localId');
+        _updateSessionStep(
+          ReverseImageSessionStepId.localIdentity,
+          ReverseImageSessionStepState.succeeded,
+          detail: 'Pixiv ID found in the selected file name',
+        );
+        return _finish([localId], matchedLocally: true, providerId: 'filename');
+      }
 
       BotToast.showText(text: I18n.ofContext().parsing);
       localId ??= await compute(
@@ -197,27 +376,46 @@ abstract class SauceStoreBase with Store {
       );
       if (_disposed) return null;
       if (localId != null) {
+        await _ensurePreparedSearchImage(originImageBytes);
+        if (_disposed) return null;
         LPrinter.d('Reverse image search resolved Pixiv ID locally: $localId');
         BotToast.showText(text: 'Pixiv ID: $localId');
-        return _finish([localId], matchedLocally: true);
+        _updateSessionStep(
+          ReverseImageSessionStepId.localIdentity,
+          ReverseImageSessionStepState.succeeded,
+          detail: 'Pixiv ID found in image metadata',
+        );
+        return _finish([localId], matchedLocally: true, providerId: 'metadata');
       }
 
       final fingerprints = await compute(
         computeDownloadImageFingerprints,
         originImageBytes,
       );
+      _selectedSha256 = fingerprints['sha256'];
       if (_disposed) return null;
       final indexedIdentity = await downloadIdentityIndex.findDigest(
         fingerprints['sha256']!,
       );
       if (_disposed) return null;
       if (indexedIdentity != null) {
+        await _ensurePreparedSearchImage(originImageBytes);
+        if (_disposed) return null;
         localId = indexedIdentity.illustId;
         LPrinter.d(
           'Reverse image search resolved Pixiv ID by SHA-256: $localId',
         );
         BotToast.showText(text: 'Pixiv ID: $localId');
-        return _finish([localId], matchedLocally: true);
+        _updateSessionStep(
+          ReverseImageSessionStepId.localIdentity,
+          ReverseImageSessionStepState.succeeded,
+          detail: 'Exact local download fingerprint matched',
+        );
+        return _finish(
+          [localId],
+          matchedLocally: true,
+          providerId: 'local-sha256',
+        );
       }
       final differenceHash = fingerprints['dhash'];
       if (differenceHash != null) {
@@ -234,13 +432,25 @@ abstract class SauceStoreBase with Store {
           );
           if (_disposed || !context.mounted) return null;
           if (accepted) {
+            await _ensurePreparedSearchImage(originImageBytes);
+            if (_disposed) return null;
             localId = nearDuplicate.identity.illustId;
             LPrinter.d(
               'Reverse image search accepted local near duplicate: '
               '$localId (distance ${nearDuplicate.distance})',
             );
             BotToast.showText(text: 'Pixiv ID: $localId');
-            return _finish([localId], matchedLocally: true);
+            _updateSessionStep(
+              ReverseImageSessionStepId.localIdentity,
+              ReverseImageSessionStepState.succeeded,
+              detail: 'Confirmed local near-duplicate match',
+            );
+            return _finish(
+              [localId],
+              matchedLocally: true,
+              providerId: 'local-dhash',
+              similarity: nearDuplicate.similarity * 100,
+            );
           }
         }
       }
@@ -255,22 +465,70 @@ abstract class SauceStoreBase with Store {
           );
           if (_disposed || !context.mounted) return null;
           if (accepted) {
+            await _ensurePreparedSearchImage(originImageBytes);
+            if (_disposed) return null;
             localId = completedTask.illustId;
             LPrinter.d(
               'Reverse image search accepted historical download: $localId',
             );
             BotToast.showText(text: 'Pixiv ID: $localId');
-            return _finish([localId], matchedLocally: true);
+            _updateSessionStep(
+              ReverseImageSessionStepId.localIdentity,
+              ReverseImageSessionStepState.succeeded,
+              detail: 'Confirmed historical download record',
+            );
+            return _finish(
+              [localId],
+              matchedLocally: true,
+              providerId: 'download-history',
+            );
           }
         }
       }
+
+      _updateSessionStep(
+        ReverseImageSessionStepId.localIdentity,
+        ReverseImageSessionStepState.noMatch,
+        detail: 'No reliable local identity found',
+      );
+      phase.value = SauceSearchPhase.uploading;
+      _updateSessionStep(
+        ReverseImageSessionStepId.prepare,
+        ReverseImageSessionStepState.running,
+        detail: 'Preparing a bounded, metadata-free local preview',
+      );
+      final prepared = await _ensurePreparedSearchImage(originImageBytes);
+      if (_disposed) return null;
+      if (prepared == null) {
+        _fail('Image is too large or unsupported');
+        return null;
+      }
+      final preparedBytes = prepared['bytes'] as Uint8List;
+      final preparedExtension = prepared['extension'] as String;
+      _updateSessionStep(
+        ReverseImageSessionStepId.prepare,
+        ReverseImageSessionStepState.succeeded,
+        detail: '${preparedBytes.length ~/ 1024} KB safe preview',
+      );
+      LPrinter.d(
+        'Reverse image upload size: ${originImageBytes.length} -> '
+        '${preparedBytes.length}',
+      );
 
       if (context == null || !context.mounted) {
         _fail('External image search requires confirmation');
         return null;
       }
 
-      if (accountStore.now != null) {
+      if (skipBookmarkPrompt) {
+        _updateSessionStep(
+          ReverseImageSessionStepId.bookmarks,
+          ReverseImageSessionStepState.skipped,
+          detail: accountStore.now == null
+              ? 'Sign in to scan your Pixiv bookmarks'
+              : 'Skipped for fast search; available as a separate action',
+        );
+      } else if (accountStore.now != null) {
         final bookmarkChoice = await showBookmarkSearchChoiceDialog(context);
         if (_disposed || !context.mounted) return null;
         if (bookmarkChoice == BookmarkSearchChoice.cancel) {
@@ -279,6 +537,11 @@ abstract class SauceStoreBase with Store {
           return null;
         }
         if (bookmarkChoice == BookmarkSearchChoice.scanBookmarks) {
+          _updateSessionStep(
+            ReverseImageSessionStepId.bookmarks,
+            ReverseImageSessionStepState.running,
+            detail: 'Scanning public and private bookmarks',
+          );
           final bookmarkEvent = await _searchOwnBookmarks(
             context: context,
             queryBytes: originImageBytes,
@@ -287,33 +550,39 @@ abstract class SauceStoreBase with Store {
           );
           if (_disposed || !context.mounted) return null;
           if (bookmarkEvent != null) return bookmarkEvent;
+          _updateSessionStep(
+            ReverseImageSessionStepId.bookmarks,
+            ReverseImageSessionStepState.noMatch,
+            detail: 'No bookmark candidate was confirmed',
+          );
         }
+      } else {
+        _updateSessionStep(
+          ReverseImageSessionStepId.bookmarks,
+          ReverseImageSessionStepState.skipped,
+          detail: 'No signed-in Pixiv account',
+        );
       }
 
       final uploadConfirmed = await _confirmExternalUpload(context);
       if (_disposed || !context.mounted) return null;
       if (!uploadConfirmed) {
-        notStart = true;
+        notStart = false;
         phase.value = SauceSearchPhase.idle;
+        _updateSessionStep(
+          ReverseImageSessionStepId.sauceNao,
+          ReverseImageSessionStepState.cancelled,
+          detail: 'External upload was not approved',
+        );
+        _updateSessionStep(
+          ReverseImageSessionStepId.iqdb,
+          ReverseImageSessionStepState.cancelled,
+          detail: 'External upload was not approved',
+        );
+        _finishSessionClock();
         return null;
       }
-
-      phase.value = SauceSearchPhase.uploading;
-      BotToast.showText(text: 'SauceNAO · ${I18n.ofContext().uploading}');
-      final prepared = await compute(
-        _prepareExternalSearchImage,
-        originImageBytes,
-      );
-      if (prepared == null) {
-        _fail('Image is too large or unsupported');
-        return null;
-      }
-      final preparedBytes = prepared['bytes'] as Uint8List;
-      final preparedExtension = prepared['extension'] as String;
-      LPrinter.d(
-        'Reverse image upload size: ${originImageBytes.length} -> '
-        '${preparedBytes.length}',
-      );
+      _externalUploadConfirmed = true;
 
       phase.value = SauceSearchPhase.parsing;
       BotToast.showText(text: 'SauceNAO + IQDB · ${I18n.ofContext().parsing}');
@@ -323,6 +592,67 @@ abstract class SauceStoreBase with Store {
         ReverseImageProbeKind.full,
       );
       if (_disposed || !context.mounted) return null;
+      if (batch.cancelled) {
+        final hasCandidates = sessionCandidates.isNotEmpty;
+        _updateSessionStep(
+          ReverseImageSessionStepId.results,
+          hasCandidates
+              ? ReverseImageSessionStepState.succeeded
+              : ReverseImageSessionStepState.cancelled,
+          detail: hasCandidates
+              ? '${sessionCandidates.length} candidate(s) retained before cancellation'
+              : 'Search cancelled before a reliable candidate was found',
+        );
+        notStart = false;
+        phase.value = hasCandidates
+            ? SauceSearchPhase.success
+            : SauceSearchPhase.cancelled;
+        _finishSessionClock();
+        return SauceSearchEvent(
+          illustIds: sessionCandidates
+              .map((candidate) => candidate.illustId)
+              .whereType<int>()
+              .toList(growable: false),
+          matchedLocally: false,
+        );
+      }
+
+      if (inlineResults) {
+        final hasCandidates = sessionCandidates.isNotEmpty;
+        final providersUnavailable = batch.successfulProviders == 0;
+        _updateSessionStep(
+          ReverseImageSessionStepId.results,
+          hasCandidates
+              ? ReverseImageSessionStepState.succeeded
+              : (providersUnavailable
+                    ? ReverseImageSessionStepState.failed
+                    : ReverseImageSessionStepState.noMatch),
+          detail: hasCandidates
+              ? '${sessionCandidates.length} candidate(s) retained'
+              : (providersUnavailable
+                    ? 'External image-search services were unavailable'
+                    : 'No reliable full-image candidate'),
+        );
+        notStart = false;
+        phase.value = hasCandidates
+            ? SauceSearchPhase.success
+            : (providersUnavailable
+                  ? SauceSearchPhase.error
+                  : SauceSearchPhase.noResult);
+        if (providersUnavailable) {
+          lastError.value = batch.serviceMessages.isEmpty
+              ? 'External image-search services were unavailable'
+              : batch.serviceMessages.join('\n');
+        }
+        _finishSessionClock();
+        return SauceSearchEvent(
+          illustIds: sessionCandidates
+              .map((candidate) => candidate.illustId)
+              .whereType<int>()
+              .toList(growable: false),
+          matchedLocally: false,
+        );
+      }
 
       var decision = await _resolveExternalCandidates(context, batch.hits);
       if (_disposed || !context.mounted) return null;
@@ -330,7 +660,12 @@ abstract class SauceStoreBase with Store {
       if (accepted != null) {
         final illustId = accepted.illustId;
         if (illustId != null) {
-          return _finish([illustId], matchedLocally: false);
+          return _finish(
+            [illustId],
+            matchedLocally: false,
+            providerId: accepted.providerId,
+            similarity: accepted.similarity,
+          );
         }
         await CustomTabPlugin.launch(accepted.sourceUrl);
         notStart = true;
@@ -376,7 +711,12 @@ abstract class SauceStoreBase with Store {
             if (accepted != null) {
               final illustId = accepted.illustId;
               if (illustId != null) {
-                return _finish([illustId], matchedLocally: false);
+                return _finish(
+                  [illustId],
+                  matchedLocally: false,
+                  providerId: accepted.providerId,
+                  similarity: accepted.similarity,
+                );
               }
               await CustomTabPlugin.launch(accepted.sourceUrl);
               notStart = true;
@@ -425,6 +765,7 @@ abstract class SauceStoreBase with Store {
       return null;
     } finally {
       _requestInProgress = false;
+      if (!_disposed) searchBusy.value = false;
     }
   }
 
@@ -435,6 +776,7 @@ abstract class SauceStoreBase with Store {
     String? queryFileName,
   }) async {
     PixivBookmarkVisualSearchController? controller;
+    _lastBookmarkSearchStatus = null;
     try {
       phase.value = SauceSearchPhase.inspecting;
       const limits = BookmarkVisualSearchLimits(
@@ -467,8 +809,13 @@ abstract class SauceStoreBase with Store {
           queryBytes: queryBytes,
           queryFileName: queryFileName,
         );
-        if (_disposed || !context.mounted || searchResult == null) return null;
+        if (_disposed || !context.mounted) return null;
+        if (searchResult == null) {
+          _lastBookmarkSearchStatus = BookmarkVisualSearchStatus.cancelled;
+          return null;
+        }
         result = searchResult;
+        _lastBookmarkSearchStatus = result.status;
         phase.value = SauceSearchPhase.inspecting;
 
         final canReviewCandidates = switch (result.status) {
@@ -539,6 +886,7 @@ abstract class SauceStoreBase with Store {
             queryFileName: queryFileName,
           );
           if (!cached) {
+            _lastBookmarkSearchStatus = BookmarkVisualSearchStatus.failed;
             final chinese =
                 Localizations.localeOf(context).languageCode == 'zh';
             BotToast.showText(
@@ -554,7 +902,18 @@ abstract class SauceStoreBase with Store {
           LPrinter.d('Unable to cache confirmed bookmark match: $error');
           LPrinter.d(stackTrace);
         }
-        return _finish([candidate.illustId], matchedLocally: true);
+        _updateSessionStep(
+          ReverseImageSessionStepId.bookmarks,
+          ReverseImageSessionStepState.succeeded,
+          detail: 'Confirmed in your Pixiv bookmarks',
+        );
+        _lastBookmarkSearchStatus = BookmarkVisualSearchStatus.matched;
+        return _finish(
+          [candidate.illustId],
+          matchedLocally: true,
+          providerId: 'bookmarks',
+          similarity: (candidate.similarity ?? 1) * 100,
+        );
       }
 
       if (result.status != BookmarkVisualSearchStatus.cancelled) {
@@ -595,6 +954,7 @@ abstract class SauceStoreBase with Store {
       }
       return null;
     } catch (error, stackTrace) {
+      _lastBookmarkSearchStatus = BookmarkVisualSearchStatus.failed;
       LPrinter.d('Bookmark visual search failed: $error\n$stackTrace');
       if (!_disposed && context.mounted) {
         final chinese = Localizations.localeOf(context).languageCode == 'zh';
@@ -613,28 +973,280 @@ abstract class SauceStoreBase with Store {
     }
   }
 
+  Future<SauceSearchEvent?> searchSelectedImageInBookmarks(
+    BuildContext context,
+  ) async {
+    final bytes = _selectedOriginBytes;
+    final sha256 = _selectedSha256;
+    if (_disposed ||
+        _requestInProgress ||
+        bytes == null ||
+        sha256 == null ||
+        !context.mounted) {
+      return null;
+    }
+    _requestInProgress = true;
+    searchBusy.value = true;
+    lastError.value = null;
+    _sessionFinishedAt = null;
+    phase.value = SauceSearchPhase.inspecting;
+    _updateSessionStep(
+      ReverseImageSessionStepId.bookmarks,
+      ReverseImageSessionStepState.running,
+      detail: 'Scanning public and private bookmarks',
+    );
+    try {
+      final event = await _searchOwnBookmarks(
+        context: context,
+        queryBytes: bytes,
+        queryFileName: selectedFileName.value,
+        querySha256: sha256,
+      );
+      if (_disposed || !context.mounted) return null;
+      if (event == null) {
+        final bookmarkStatus = _lastBookmarkSearchStatus;
+        final stepState = switch (bookmarkStatus) {
+          BookmarkVisualSearchStatus.cancelled =>
+            ReverseImageSessionStepState.cancelled,
+          BookmarkVisualSearchStatus.failed ||
+          BookmarkVisualSearchStatus.accountChanged ||
+          BookmarkVisualSearchStatus.unauthenticated =>
+            ReverseImageSessionStepState.failed,
+          _ => ReverseImageSessionStepState.noMatch,
+        };
+        _updateSessionStep(
+          ReverseImageSessionStepId.bookmarks,
+          stepState,
+          detail: switch (bookmarkStatus) {
+            BookmarkVisualSearchStatus.cancelled => 'Bookmark scan cancelled',
+            BookmarkVisualSearchStatus.limitReached =>
+              'Bookmark scan limit reached',
+            BookmarkVisualSearchStatus.incomplete =>
+              'Bookmark scan was incomplete',
+            BookmarkVisualSearchStatus.failed => 'Bookmark scan failed',
+            BookmarkVisualSearchStatus.accountChanged =>
+              'Pixiv account changed during the scan',
+            BookmarkVisualSearchStatus.unauthenticated =>
+              'No signed-in Pixiv account',
+            _ => 'No bookmark candidate was confirmed',
+          },
+        );
+        phase.value = sessionCandidates.isEmpty
+            ? SauceSearchPhase.noResult
+            : SauceSearchPhase.success;
+        _finishSessionClock();
+      }
+      return event;
+    } finally {
+      _requestInProgress = false;
+      if (!_disposed) searchBusy.value = false;
+    }
+  }
+
+  void cancelCurrentSearch() {
+    final token = _externalCancelToken;
+    if (_disposed || token == null || token.isCancelled) return;
+    token.cancel('Cancelled by user');
+    for (final stepId in const <ReverseImageSessionStepId>[
+      ReverseImageSessionStepId.sauceNao,
+      ReverseImageSessionStepId.iqdb,
+      ReverseImageSessionStepId.crop,
+    ]) {
+      final index = sessionSteps.indexWhere((item) => item.id == stepId);
+      if (index >= 0 &&
+          sessionSteps[index].state == ReverseImageSessionStepState.running) {
+        _updateSessionStep(
+          stepId,
+          ReverseImageSessionStepState.cancelled,
+          detail: 'Cancelled by user',
+        );
+      }
+    }
+  }
+
+  Future<void> retrySelectedRegion(
+    BuildContext context,
+    ReverseImageProbeKind probe,
+  ) async {
+    final originBytes = _selectedOriginBytes;
+    if (_disposed ||
+        _requestInProgress ||
+        originBytes == null ||
+        probe == ReverseImageProbeKind.full ||
+        !context.mounted) {
+      return;
+    }
+    _requestInProgress = true;
+    searchBusy.value = true;
+    lastError.value = null;
+    try {
+      if (!_externalUploadConfirmed) {
+        final confirmed = await _confirmExternalUpload(context);
+        if (!confirmed || _disposed || !context.mounted) return;
+        _externalUploadConfirmed = true;
+      }
+
+      _sessionFinishedAt = null;
+      phase.value = SauceSearchPhase.uploading;
+      _updateSessionStep(
+        ReverseImageSessionStepId.crop,
+        ReverseImageSessionStepState.running,
+        detail: 'Preparing ${probe.name} region',
+      );
+      final cropped = await compute(_prepareExternalSearchCrop, {
+        'bytes': originBytes,
+        'probe': probe.name,
+      });
+      if (_disposed || !context.mounted) return;
+      if (cropped == null) {
+        _updateSessionStep(
+          ReverseImageSessionStepId.crop,
+          ReverseImageSessionStepState.failed,
+          detail: 'The selected region could not be prepared',
+        );
+        _fail('Image region is too large or unsupported');
+        return;
+      }
+      final cropBytes = cropped['bytes'] as Uint8List;
+      final cropExtension = cropped['extension'] as String;
+      phase.value = SauceSearchPhase.parsing;
+      final batch = await _searchExternalProviders(
+        cropBytes,
+        cropExtension,
+        probe,
+      );
+      if (_disposed || !context.mounted) return;
+      if (batch.cancelled) {
+        final hasCandidates = sessionCandidates.isNotEmpty;
+        _updateSessionStep(
+          ReverseImageSessionStepId.crop,
+          ReverseImageSessionStepState.cancelled,
+          detail: 'Region search cancelled by user',
+        );
+        _updateSessionStep(
+          ReverseImageSessionStepId.results,
+          hasCandidates
+              ? ReverseImageSessionStepState.succeeded
+              : ReverseImageSessionStepState.cancelled,
+          detail: hasCandidates
+              ? '${sessionCandidates.length} earlier candidate(s) retained'
+              : 'Search cancelled before a reliable candidate was found',
+        );
+        notStart = false;
+        phase.value = hasCandidates
+            ? SauceSearchPhase.success
+            : SauceSearchPhase.cancelled;
+        _finishSessionClock();
+        return;
+      }
+      final retainedFromProbe = sessionCandidates
+          .where(
+            (candidate) =>
+                candidate.evidence.any((evidence) => evidence.probe == probe),
+          )
+          .length;
+      final cropState = batch.successfulProviders == 0
+          ? ReverseImageSessionStepState.failed
+          : (retainedFromProbe == 0
+                ? ReverseImageSessionStepState.noMatch
+                : ReverseImageSessionStepState.succeeded);
+      _updateSessionStep(
+        ReverseImageSessionStepId.crop,
+        cropState,
+        detail: batch.successfulProviders == 0
+            ? 'Both external providers failed for ${probe.name}'
+            : (retainedFromProbe == 0
+                  ? 'No reliable candidate in ${probe.name} region'
+                  : '$retainedFromProbe retained candidate(s) from '
+                        '${probe.name} region'),
+      );
+      final hasCandidates = sessionCandidates.isNotEmpty;
+      final providersUnavailable = batch.successfulProviders == 0;
+      _updateSessionStep(
+        ReverseImageSessionStepId.results,
+        hasCandidates
+            ? ReverseImageSessionStepState.succeeded
+            : (providersUnavailable
+                  ? ReverseImageSessionStepState.failed
+                  : ReverseImageSessionStepState.noMatch),
+        detail: hasCandidates
+            ? '${sessionCandidates.length} candidate(s) retained'
+            : (providersUnavailable
+                  ? 'External image-search services were unavailable'
+                  : 'No reliable candidate after region search'),
+      );
+      notStart = false;
+      phase.value = hasCandidates
+          ? SauceSearchPhase.success
+          : (providersUnavailable
+                ? SauceSearchPhase.error
+                : SauceSearchPhase.noResult);
+      if (providersUnavailable) {
+        lastError.value = batch.serviceMessages.isEmpty
+            ? 'External image-search services were unavailable'
+            : batch.serviceMessages.join('\n');
+      }
+      _finishSessionClock();
+    } catch (error, stackTrace) {
+      LPrinter.d('Region reverse image search failed: $error\n$stackTrace');
+      _updateSessionStep(
+        ReverseImageSessionStepId.crop,
+        ReverseImageSessionStepState.failed,
+        detail: 'The selected region search failed',
+      );
+      _fail('Region image search failed');
+    } finally {
+      _requestInProgress = false;
+      if (!_disposed) searchBusy.value = false;
+    }
+  }
+
+  Future<void> openAscii2dForCurrentImage(BuildContext context) async {
+    if (_disposed || _requestInProgress || !context.mounted) return;
+    final originBytes = _selectedOriginBytes;
+    if (originBytes == null) return;
+    _requestInProgress = true;
+    searchBusy.value = true;
+    try {
+      final prepared = await _ensurePreparedSearchImage(originBytes);
+      if (_disposed || !context.mounted || prepared == null) return;
+      final preparedBytes = prepared['bytes'] as Uint8List;
+      await _offerAscii2dFallback(context, preparedBytes);
+    } finally {
+      _requestInProgress = false;
+      if (!_disposed) searchBusy.value = false;
+    }
+  }
+
   Future<bool> _offerAscii2dFallback(
     BuildContext context,
     Uint8List sanitizedImageBytes,
   ) async {
     if (!Platform.isAndroid || _disposed || !context.mounted) return false;
     final chinese = Localizations.localeOf(context).languageCode == 'zh';
+    final hasCandidates = sessionCandidates.isNotEmpty;
     final open =
         await showDialog<bool>(
           context: context,
           barrierDismissible: false,
           builder: (dialogContext) => AlertDialog(
             title: Text(
-              chinese ? '外部索引未找到原作' : 'No source in the external indexes',
+              chinese
+                  ? (hasCandidates ? '继续查找更多来源？' : '外部索引未找到原作')
+                  : (hasCandidates
+                        ? 'Search for more sources?'
+                        : 'No source in the external indexes'),
             ),
             content: Text(
               chinese
-                  ? 'SauceNAO 和 IQDB 未找到可靠候选。可以在 Ascii2D 官方网页继续：完整图用「色合搜索」，裁剪图或局部图用「特征搜索」。只有你在下一页再次点击「使用这张图」后，去除元数据的副本才会交给 Ascii2D。'
-                  : 'SauceNAO and IQDB found no reliable candidate. Continue '
-                        'on the official Ascii2D page: use color search for a '
-                        'complete image and feature search for a crop or '
-                        'partial image. The metadata-free copy is handed to '
-                        'Ascii2D only after you tap Use this image again.',
+                  ? '${hasCandidates ? '当前候选会保留。' : 'SauceNAO 和 IQDB 未找到可靠候选。'}'
+                        '可以在 Ascii2D 官方网页继续：完整图用「色合搜索」，裁剪图或局部图用「特征搜索」。只有你在下一页再次点击「使用这张图」后，去除元数据的副本才会交给 Ascii2D。'
+                  : '${hasCandidates ? 'The current candidates will remain. ' : 'SauceNAO and IQDB found no reliable candidate. '}'
+                        'Continue on the official Ascii2D page: use color '
+                        'search for a complete image and feature search for a '
+                        'crop or partial image. The metadata-free copy is '
+                        'handed to Ascii2D only after you tap Use this image '
+                        'again.',
             ),
             actions: [
               TextButton(
@@ -651,11 +1263,15 @@ abstract class SauceStoreBase with Store {
         false;
     if (!open || _disposed || !context.mounted) return false;
 
-    notStart = true;
-    phase.value = SauceSearchPhase.idle;
     await Navigator.of(context).push(
       Ascii2dBrowserSearchPage.route(sanitizedImageBytes: sanitizedImageBytes),
     );
+    if (!_disposed) {
+      notStart = false;
+      phase.value = sessionCandidates.isEmpty
+          ? SauceSearchPhase.noResult
+          : SauceSearchPhase.success;
+    }
     return true;
   }
 
@@ -684,10 +1300,35 @@ abstract class SauceStoreBase with Store {
     return builder.takeBytes();
   }
 
+  Future<Map<String, Object>?> _ensurePreparedSearchImage(
+    Uint8List originBytes,
+  ) async {
+    final cachedBytes = _preparedSearchBytes;
+    final cachedExtension = _preparedSearchExtension;
+    if (cachedBytes != null && cachedExtension != null) {
+      return <String, Object>{
+        'bytes': cachedBytes,
+        'extension': cachedExtension,
+      };
+    }
+    final prepared = await compute(_prepareExternalSearchImage, originBytes);
+    if (_disposed || prepared == null) return null;
+    final bytes = prepared['bytes'] as Uint8List;
+    final extension = prepared['extension'] as String;
+    _preparedSearchBytes = bytes;
+    _preparedSearchExtension = extension;
+    // Never hand an unvalidated, potentially huge compressed image directly to
+    // Image.memory. The same bounded, metadata-free copy used for provider
+    // search is safe to keep as the on-page preview.
+    selectedImageBytes.value = bytes;
+    return <String, Object>{'bytes': bytes, 'extension': extension};
+  }
+
   Future<SauceNaoPixivResults> _searchSauceNao(
     Uint8List bytes,
     String extension, {
     required bool pixivOnly,
+    required CancelToken cancelToken,
   }) async {
     final form = <String, dynamic>{
       if (pixivOnly) 'dbs[]': '5' else 'db': '999',
@@ -699,6 +1340,7 @@ abstract class SauceStoreBase with Store {
     final response = await dio.post<dynamic>(
       '/search.php',
       data: FormData.fromMap(form),
+      cancelToken: cancelToken,
     );
     final responseHtml = switch (response.data) {
       String value => value,
@@ -713,28 +1355,94 @@ abstract class SauceStoreBase with Store {
     String extension,
     ReverseImageProbeKind probe,
   ) async {
+    final cancelToken = CancelToken();
+    _externalCancelToken = cancelToken;
+    _updateSessionStep(
+      ReverseImageSessionStepId.sauceNao,
+      ReverseImageSessionStepState.running,
+      detail: 'Searching the Pixiv index',
+    );
+    _updateSessionStep(
+      ReverseImageSessionStepId.iqdb,
+      ReverseImageSessionStepState.running,
+      detail: 'Searching mirror indexes',
+    );
+
+    // SauceNAO and IQDB are independent services. Running the IQDB request in
+    // parallel with SauceNAO's db5 -> conditional db999 chain preserves the
+    // same request count and confidence rules while removing one full network
+    // timeout from the critical path.
+    Future<_ExternalSearchBatch> recordWhenReady(
+      Future<_ExternalSearchBatch> future,
+    ) async {
+      final batch = await future;
+      if (!_disposed && !cancelToken.isCancelled) {
+        _recordExternalBatch(batch);
+      }
+      return batch;
+    }
+
+    try {
+      final branches = await Future.wait<_ExternalSearchBatch>([
+        recordWhenReady(
+          _searchSauceProvider(bytes, extension, probe, cancelToken),
+        ),
+        recordWhenReady(
+          _searchIqdbProvider(bytes, extension, probe, cancelToken),
+        ),
+      ]);
+      return branches[0]
+          .merge(branches[1])
+          .copyWith(cancelled: cancelToken.isCancelled);
+    } finally {
+      if (identical(_externalCancelToken, cancelToken)) {
+        _externalCancelToken = null;
+      }
+    }
+  }
+
+  Future<_ExternalSearchBatch> _searchSauceProvider(
+    Uint8List bytes,
+    String extension,
+    ReverseImageProbeKind probe,
+    CancelToken cancelToken,
+  ) async {
     final hits = <ReverseImageProviderHit>[];
     final messages = <String>[];
     var successfulProviders = 0;
 
     SauceNaoPixivResults? sauceResults;
     try {
-      sauceResults = await _searchSauceNao(bytes, extension, pixivOnly: true);
+      sauceResults = await _searchSauceNao(
+        bytes,
+        extension,
+        pixivOnly: true,
+        cancelToken: cancelToken,
+      );
       successfulProviders++;
     } on SauceNaoResponseException catch (error) {
       messages.add(error.message);
       LPrinter.d('SauceNAO provider unavailable: ${error.message}');
     } on DioException catch (error) {
-      final message = _dioMessage(error);
-      messages.add(message);
-      LPrinter.d('SauceNAO provider unavailable: $message');
+      if (!CancelToken.isCancel(error)) {
+        final message = _dioMessage(error);
+        messages.add(message);
+        LPrinter.d('SauceNAO provider unavailable: $message');
+      }
     } catch (error, stackTrace) {
       const message = 'SauceNAO returned an unsupported response';
       messages.add(message);
       LPrinter.d('$message: $error\n$stackTrace');
     }
 
-    if (sauceResults != null && sauceResults.exactMatches.isEmpty) {
+    if (!cancelToken.isCancelled &&
+        sauceResults != null &&
+        sauceResults.exactMatches.isEmpty) {
+      _updateSessionStep(
+        ReverseImageSessionStepId.sauceNao,
+        ReverseImageSessionStepState.running,
+        detail: 'Pixiv index had no exact match; searching all indexes',
+      );
       LPrinter.d(
         'SauceNAO db5 returned no high-confidence Pixiv candidate; '
         'trying db999',
@@ -744,6 +1452,7 @@ abstract class SauceStoreBase with Store {
           bytes,
           extension,
           pixivOnly: false,
+          cancelToken: cancelToken,
         );
         sauceResults = _mergeSauceResults(sauceResults, allDatabaseResults);
       } on SauceNaoResponseException catch (error) {
@@ -754,9 +1463,11 @@ abstract class SauceStoreBase with Store {
           'SauceNAO all-database fallback unavailable: ${error.message}',
         );
       } on DioException catch (error) {
-        final message = _dioMessage(error);
-        messages.add(message);
-        LPrinter.d('SauceNAO all-database fallback unavailable: $message');
+        if (!CancelToken.isCancel(error)) {
+          final message = _dioMessage(error);
+          messages.add(message);
+          LPrinter.d('SauceNAO all-database fallback unavailable: $message');
+        }
       } catch (error, stackTrace) {
         const message = 'SauceNAO all-database response was unsupported';
         messages.add(message);
@@ -777,6 +1488,7 @@ abstract class SauceStoreBase with Store {
             similarity: candidate.similarity,
             sourceUrl: candidate.pixivUrl,
             title: 'Pixiv #${candidate.illustId}',
+            thumbnailUrl: candidate.thumbnailUrl,
           ),
         );
       }
@@ -789,27 +1501,81 @@ abstract class SauceStoreBase with Store {
             similarity: candidate.similarity,
             sourceUrl: candidate.sourceUrl,
             title: candidate.title,
+            thumbnailUrl: candidate.thumbnailUrl,
           ),
         );
       }
     }
 
+    final sauceCandidateCount = hits.length;
+    _updateSessionStep(
+      ReverseImageSessionStepId.sauceNao,
+      cancelToken.isCancelled
+          ? ReverseImageSessionStepState.cancelled
+          : successfulProviders > 0
+          ? (sauceCandidateCount > 0
+                ? ReverseImageSessionStepState.succeeded
+                : ReverseImageSessionStepState.noMatch)
+          : ReverseImageSessionStepState.failed,
+      detail: cancelToken.isCancelled
+          ? 'Cancelled by user'
+          : successfulProviders > 0
+          ? '$sauceCandidateCount candidate(s)'
+          : (messages.isEmpty ? 'SauceNAO unavailable' : messages.join(' · ')),
+    );
+
+    return _ExternalSearchBatch(
+      hits: List.unmodifiable(hits),
+      successfulProviders: successfulProviders,
+      serviceMessages: List.unmodifiable(messages),
+    );
+  }
+
+  Future<_ExternalSearchBatch> _searchIqdbProvider(
+    Uint8List bytes,
+    String extension,
+    ReverseImageProbeKind probe,
+    CancelToken cancelToken,
+  ) async {
+    final hits = <ReverseImageProviderHit>[];
+    final messages = <String>[];
+    var successfulProviders = 0;
+
     try {
-      final iqdbResponse = await _iqdbProvider.search(
+      final iqdbResponse = await _iqdbProvider.searchWithCancel(
         ReverseImageQuery(bytes: bytes, extension: extension, probe: probe),
+        cancelToken: cancelToken,
       );
-      if (iqdbResponse.serviceMessage == null) {
+      if (cancelToken.isCancelled) {
+        // Cancellation is a user action, not a provider failure.
+      } else if (iqdbResponse.serviceMessage == null) {
         successfulProviders++;
       } else {
         messages.add(iqdbResponse.serviceMessage!);
         LPrinter.d('IQDB provider unavailable: ${iqdbResponse.serviceMessage}');
       }
-      hits.addAll(iqdbResponse.hits);
+      if (!cancelToken.isCancelled) hits.addAll(iqdbResponse.hits);
     } catch (error, stackTrace) {
       const message = 'IQDB returned an unsupported response';
       messages.add(message);
       LPrinter.d('$message: $error\n$stackTrace');
     }
+
+    _updateSessionStep(
+      ReverseImageSessionStepId.iqdb,
+      cancelToken.isCancelled
+          ? ReverseImageSessionStepState.cancelled
+          : successfulProviders > 0
+          ? (hits.isNotEmpty
+                ? ReverseImageSessionStepState.succeeded
+                : ReverseImageSessionStepState.noMatch)
+          : ReverseImageSessionStepState.failed,
+      detail: cancelToken.isCancelled
+          ? 'Cancelled by user'
+          : successfulProviders > 0
+          ? '${hits.length} candidate(s)'
+          : (messages.isEmpty ? 'IQDB unavailable' : messages.join(' · ')),
+    );
 
     return _ExternalSearchBatch(
       // Preserve independent provider evidence here. Candidate presentation
@@ -1295,7 +2061,12 @@ abstract class SauceStoreBase with Store {
         false;
   }
 
-  SauceSearchEvent _finish(Iterable<int> ids, {required bool matchedLocally}) {
+  SauceSearchEvent _finish(
+    Iterable<int> ids, {
+    required bool matchedLocally,
+    String providerId = 'local',
+    double similarity = 100,
+  }) {
     final unique = <int>{...ids}.toList(growable: false);
     final event = SauceSearchEvent(
       illustIds: unique,
@@ -1305,9 +2076,17 @@ abstract class SauceStoreBase with Store {
     results
       ..clear()
       ..addAll(unique);
+    for (final illustId in unique) {
+      _recordResolvedCandidate(
+        illustId,
+        providerId: providerId,
+        similarity: similarity,
+      );
+    }
     notStart = false;
     phase.value = SauceSearchPhase.success;
-    _streamController.add(event);
+    _finishSessionClock();
+    if (!_inlineResults) _streamController.add(event);
     return event;
   }
 
@@ -1316,6 +2095,17 @@ abstract class SauceStoreBase with Store {
     notStart = false;
     lastError.value = message;
     phase.value = SauceSearchPhase.error;
+    final runningIndex = sessionSteps.indexWhere(
+      (step) => step.state == ReverseImageSessionStepState.running,
+    );
+    if (runningIndex >= 0) {
+      _updateSessionStep(
+        sessionSteps[runningIndex].id,
+        ReverseImageSessionStepState.failed,
+        detail: message,
+      );
+    }
+    _finishSessionClock();
     BotToast.showText(text: message);
   }
 
@@ -1493,12 +2283,21 @@ class _ExternalSearchBatch {
   final List<ReverseImageProviderHit> hits;
   final int successfulProviders;
   final List<String> serviceMessages;
+  final bool cancelled;
 
   const _ExternalSearchBatch({
     required this.hits,
     required this.successfulProviders,
     required this.serviceMessages,
+    this.cancelled = false,
   });
+
+  _ExternalSearchBatch copyWith({bool? cancelled}) => _ExternalSearchBatch(
+    hits: hits,
+    successfulProviders: successfulProviders,
+    serviceMessages: serviceMessages,
+    cancelled: cancelled ?? this.cancelled,
+  );
 
   _ExternalSearchBatch merge(_ExternalSearchBatch other) {
     return _ExternalSearchBatch(
@@ -1510,6 +2309,7 @@ class _ExternalSearchBatch {
       ]),
       successfulProviders: successfulProviders + other.successfulProviders,
       serviceMessages: {...serviceMessages, ...other.serviceMessages}.toList(),
+      cancelled: cancelled || other.cancelled,
     );
   }
 }

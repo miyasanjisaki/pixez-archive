@@ -368,7 +368,7 @@
   "@reverse_image_external_title": {
     "description": "Title of the confirmation shown before an image is uploaded to external search providers"
   },
-  "reverse_image_external_message": "PixEz could not identify a Pixiv ID locally. Continue only if you agree to send a resized, metadata-free copy first to SauceNAO and then to IQDB. Removing metadata does not hide the visible picture content. If the full image has no result, PixEz will ask before sending one crop you select.",
+  "reverse_image_external_message": "PixEz could not identify a Pixiv ID locally. Continue only if you agree to send separate resized, metadata-free copies to SauceNAO and IQDB at the same time. Both third-party services can still see the visible picture content. An additional region is sent only when you explicitly choose that region.",
   "@reverse_image_external_message": {
     "description": "Explains the third-party upload used as reverse-image-search fallback"
   }

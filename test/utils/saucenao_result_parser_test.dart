@@ -73,6 +73,63 @@ void main() {
     expect(result.possibleMatches.single.similarity, 72.5);
   });
 
+  test('normalizes a provider-relative Pixiv result thumbnail', () {
+    const html = '''
+      <div class="result">
+        <div class="resultimage">
+          <img src="data:image/gif;base64,placeholder"
+               data-src="/user_images/thumbs/12345678.jpg">
+        </div>
+        <div class="resultsimilarityinfo">72.50%</div>
+        <a href="https://www.pixiv.net/artworks/12345678">Pixiv</a>
+      </div>
+    ''';
+
+    final candidate = parseSauceNaoPixivResults(html).possibleMatches.single;
+    expect(
+      candidate.thumbnailUrl,
+      'https://saucenao.com/user_images/thumbs/12345678.jpg',
+    );
+  });
+
+  test('normalizes a protocol-relative generic result thumbnail', () {
+    const html = '''
+      <div class="result">
+        <div class="resultimage">
+          <img src="//cdn.saucenao.com/thumbs/result.jpg">
+        </div>
+        <div class="resultsimilarityinfo">76.00%</div>
+        <a href="https://gelbooru.com/index.php?page=post&amp;s=view&amp;id=44">
+          Gelbooru source
+        </a>
+      </div>
+    ''';
+
+    final candidate = parseSauceNaoPixivResults(html).externalMatches.single;
+    expect(
+      candidate.thumbnailUrl,
+      'https://cdn.saucenao.com/thumbs/result.jpg',
+    );
+  });
+
+  test('keeps a usable thumbnail while deduplicating to the best result', () {
+    const html = '''
+      <div class="result">
+        <div class="resultimage"><img src="/thumbs/12345678.jpg"></div>
+        <div class="resultsimilarityinfo">64.00%</div>
+        <a href="https://www.pixiv.net/artworks/12345678">Pixiv</a>
+      </div>
+      <div class="result">
+        <div class="resultsimilarityinfo">83.00%</div>
+        <a href="https://www.pixiv.net/artworks/12345678">Pixiv</a>
+      </div>
+    ''';
+
+    final candidate = parseSauceNaoPixivResults(html).exactMatches.single;
+    expect(candidate.similarity, 83);
+    expect(candidate.thumbnailUrl, 'https://saucenao.com/thumbs/12345678.jpg');
+  });
+
   test('keeps a folded medium-confidence candidate for confirmation', () {
     const html = '''
       <div class="result hidden">
@@ -182,6 +239,45 @@ void main() {
     expect(result.exactMatches, isEmpty);
     expect(result.possibleMatches, isEmpty);
     expect(result.externalMatches.single.sourceUrl, contains('example.com'));
+  });
+
+  test('rejects a non-network thumbnail URL', () {
+    const html = '''
+      <div class="result">
+        <div class="resultimage"><img src="data:image/png;base64,AAAA"></div>
+        <div class="resultsimilarityinfo">81.00%</div>
+        <a href="https://www.pixiv.net/artworks/12345678">Pixiv</a>
+      </div>
+    ''';
+
+    final candidate = parseSauceNaoPixivResults(html).exactMatches.single;
+    expect(candidate.thumbnailUrl, isNull);
+  });
+
+  test('rejects insecure and off-provider thumbnail URLs', () {
+    const html = '''
+      <div class="result">
+        <div class="resultimage">
+          <img src="http://saucenao.com/thumbs/12345678.jpg">
+        </div>
+        <div class="resultsimilarityinfo">82.00%</div>
+        <a href="https://www.pixiv.net/artworks/12345678">Pixiv</a>
+      </div>
+      <div class="result">
+        <div class="resultimage">
+          <img src="https://tracker.example/thumbs/23456789.jpg">
+        </div>
+        <div class="resultsimilarityinfo">81.00%</div>
+        <a href="https://www.pixiv.net/artworks/23456789">Pixiv</a>
+      </div>
+    ''';
+
+    expect(
+      parseSauceNaoPixivResults(
+        html,
+      ).exactMatches.map((candidate) => candidate.thumbnailUrl),
+      everyElement(isNull),
+    );
   });
 
   test('accepts an explicitly labelled Pixiv ID on a mirror card', () {
