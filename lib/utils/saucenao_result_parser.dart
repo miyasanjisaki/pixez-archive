@@ -56,6 +56,12 @@ class SauceNaoPixivResults {
       exactMatches.isEmpty &&
       possibleMatches.isEmpty &&
       externalMatches.isEmpty;
+
+  /// A broad all-index retry is useful only when the Pixiv index produced no
+  /// Pixiv work at all. Medium/low-confidence candidates are still evidence
+  /// and must not trigger an immediate second SauceNAO request.
+  bool get hasPixivCandidates =>
+      exactMatches.isNotEmpty || possibleMatches.isNotEmpty;
 }
 
 /// Parses SauceNAO result cards into auto-openable and confirmable Pixiv
@@ -230,8 +236,8 @@ String? _extractThumbnailUrl(Element block) {
       : block.querySelectorAll('img');
   for (final image in images) {
     for (final attribute in const <String>[
-      'data-src',
       'data-original',
+      'data-src',
       'src',
     ]) {
       final normalized = _normalizeProviderAssetUrl(

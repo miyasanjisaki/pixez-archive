@@ -16,8 +16,39 @@ import 'package:pixez/utils/image_perceptual_hash.dart';
 const String _pixivBookmarkPath = '/v1/user/bookmarks/illust';
 const String _pixivApiHost = 'app-api.pixiv.net';
 const String _pixivImageHost = 'i.pximg.net';
-const int _maximumBookmarkFingerprintPixels = 24 * 1024 * 1024;
+// Keep the query-image boundary aligned with the local identity and sanitized
+// preview paths. Otherwise a 24-32 MP image can pass local inspection but fail
+// the bookmark scan before the first Pixiv request is made.
+const int maximumBookmarkFingerprintPixels = 32 * 1024 * 1024;
 const int _maximumBookmarkFingerprintBytes = 32 * 1024 * 1024;
+
+/// Returns a short, sanitized explanation suitable for the search-progress UI.
+/// Never surface request URLs, response bodies, account IDs, or access tokens.
+String describeBookmarkVisualSearchFailure(Object? error) {
+  if (error is BookmarkVisualQueryImageException) {
+    return 'Selected image could not be decoded for bookmark comparison';
+  }
+  if (error is FormatException) {
+    return 'Pixiv bookmark data could not be processed';
+  }
+  if (error is TimeoutException) {
+    return 'Pixiv bookmark request timed out';
+  }
+  if (error is DioException) {
+    final status = error.response?.statusCode;
+    if (status == 401 || status == 403) {
+      return 'Pixiv login expired or bookmark access was denied';
+    }
+    if (error.type == DioExceptionType.connectionTimeout ||
+        error.type == DioExceptionType.sendTimeout ||
+        error.type == DioExceptionType.receiveTimeout) {
+      return 'Pixiv bookmark request timed out';
+    }
+    if (status != null) return 'Pixiv bookmark request failed ($status)';
+    return 'Pixiv bookmark network request failed';
+  }
+  return 'Bookmark scan failed';
+}
 
 class PixivCurrentUserBookmarkVisualSource
     implements CurrentUserBookmarkVisualSource {
@@ -195,7 +226,7 @@ Map<String, String?> _computeBookmarkVisualFingerprints(Uint8List bytes) =>
       'sha256': computeImageSha256(bytes),
       'dhash': tryComputeDifferenceHash(
         bytes,
-        maximumDecodedPixels: _maximumBookmarkFingerprintPixels,
+        maximumDecodedPixels: maximumBookmarkFingerprintPixels,
         maximumEncodedBytes: _maximumBookmarkFingerprintBytes,
       ),
     };
@@ -379,7 +410,7 @@ Uint8List? _buildBookmarkCandidatePreview(Uint8List bytes) {
     if (info == null ||
         info.width <= 0 ||
         info.height <= 0 ||
-        info.width > _maximumBookmarkFingerprintPixels ~/ info.height) {
+        info.width > maximumBookmarkFingerprintPixels ~/ info.height) {
       return null;
     }
     final decoded = image.decodeImage(bytes);

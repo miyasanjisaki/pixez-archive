@@ -101,6 +101,35 @@ class ReverseImageDisplayCandidate {
       evidence.map((hit) => hit.probe).toSet();
 }
 
+/// Extracts a display-only Pixiv preview from an illustration-detail response.
+/// The API response is still treated as untrusted data: only Pixiv's canonical
+/// HTTPS image host is accepted before the URL reaches the image widget.
+String? extractPixivCandidateThumbnailUrl(Object? responseData) {
+  if (responseData is! Map) return null;
+  final illust = responseData['illust'];
+  if (illust is! Map) return null;
+  // The detail response's top-level image URL is p0. Without a page index in
+  // the reverse-search evidence it is only safe to upgrade single-page works;
+  // multi-page matches keep the provider thumbnail for the actual hit page.
+  final pageCount = illust['page_count'];
+  if (pageCount is! num || pageCount.toInt() != 1) return null;
+  final imageUrls = illust['image_urls'];
+  if (imageUrls is! Map) return null;
+  for (final key in const <String>['square_medium', 'medium']) {
+    final value = imageUrls[key];
+    if (value is! String) continue;
+    final uri = Uri.tryParse(value);
+    if (uri != null &&
+        uri.scheme.toLowerCase() == 'https' &&
+        uri.userInfo.isEmpty &&
+        (!uri.hasPort || uri.port == 443) &&
+        uri.host.toLowerCase() == 'i.pximg.net') {
+      return value;
+    }
+  }
+  return null;
+}
+
 /// Produces the complete, stable candidate list shown by the image-search page.
 ///
 /// Unlike the old modal dialog this does not truncate to five rows. A weak

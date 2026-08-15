@@ -130,7 +130,9 @@ abstract class SauceStoreBase with Store {
   final List<ReverseImageProviderHit> _sessionHits = [];
   PixivBookmarkVisualSearchController? _bookmarkSearchController;
   BookmarkVisualSearchStatus? _lastBookmarkSearchStatus;
+  String? _lastBookmarkSearchDetail;
   CancelToken? _externalCancelToken;
+  CancelToken? _iqdbCancelToken;
 
   DateTime? get sessionStartedAt => _sessionStartedAt;
 
@@ -142,11 +144,17 @@ abstract class SauceStoreBase with Store {
     return (_sessionFinishedAt ?? DateTime.now()).difference(started);
   }
 
-  bool get canSearchBookmarks =>
-      !searchBusy.value &&
-      _selectedOriginBytes != null &&
-      _selectedSha256 != null &&
-      accountStore.now != null;
+  bool get _hasUsablePixivAccount {
+    final userId = int.tryParse(accountStore.now?.userId ?? '');
+    return userId != null && userId > 0;
+  }
+
+  bool get canSearchBookmarks {
+    return !searchBusy.value &&
+        _selectedOriginBytes != null &&
+        _selectedSha256 != null &&
+        _hasUsablePixivAccount;
+  }
 
   bool get canRetryRegion => !searchBusy.value && _selectedOriginBytes != null;
 
@@ -157,6 +165,29 @@ abstract class SauceStoreBase with Store {
 
   bool get canCancelSearch =>
       searchBusy.value && _externalCancelToken?.isCancelled == false;
+
+  ReverseImageSessionStepState get _bookmarkTerminalStepState =>
+      switch (_lastBookmarkSearchStatus) {
+        BookmarkVisualSearchStatus.cancelled =>
+          ReverseImageSessionStepState.cancelled,
+        BookmarkVisualSearchStatus.failed ||
+        BookmarkVisualSearchStatus.accountChanged ||
+        BookmarkVisualSearchStatus.unauthenticated =>
+          ReverseImageSessionStepState.failed,
+        _ => ReverseImageSessionStepState.noMatch,
+      };
+
+  String get _bookmarkTerminalDetail => switch (_lastBookmarkSearchStatus) {
+    BookmarkVisualSearchStatus.cancelled => 'Bookmark scan cancelled',
+    BookmarkVisualSearchStatus.limitReached => 'Bookmark scan limit reached',
+    BookmarkVisualSearchStatus.incomplete => 'Bookmark scan was incomplete',
+    BookmarkVisualSearchStatus.failed =>
+      _lastBookmarkSearchDetail ?? 'Bookmark scan failed',
+    BookmarkVisualSearchStatus.accountChanged =>
+      'Pixiv account changed during the scan',
+    BookmarkVisualSearchStatus.unauthenticated => 'No signed-in Pixiv account',
+    _ => 'No bookmark candidate was confirmed',
+  };
 
   void _resetSession({required bool inlineResults}) {
     _inlineResults = inlineResults;
@@ -169,6 +200,7 @@ abstract class SauceStoreBase with Store {
     _preparedSearchExtension = null;
     _sessionHits.clear();
     _lastBookmarkSearchStatus = null;
+    _lastBookmarkSearchDetail = null;
     selectedFileName.value = null;
     selectedImageBytes.value = null;
     sessionCandidates.clear();
@@ -261,6 +293,8 @@ abstract class SauceStoreBase with Store {
     _disposed = true;
     _externalCancelToken?.cancel('Image-search page disposed');
     _externalCancelToken = null;
+    _iqdbCancelToken?.cancel('Image-search page disposed');
+    _iqdbCancelToken = null;
     _bookmarkSearchController?.dispose();
     _bookmarkSearchController = null;
     dio.close(force: true);
@@ -524,11 +558,11 @@ abstract class SauceStoreBase with Store {
         _updateSessionStep(
           ReverseImageSessionStepId.bookmarks,
           ReverseImageSessionStepState.skipped,
-          detail: accountStore.now == null
+          detail: !_hasUsablePixivAccount
               ? 'Sign in to scan your Pixiv bookmarks'
               : 'Skipped for fast search; available as a separate action',
         );
-      } else if (accountStore.now != null) {
+      } else if (_hasUsablePixivAccount) {
         final bookmarkChoice = await showBookmarkSearchChoiceDialog(context);
         if (_disposed || !context.mounted) return null;
         if (bookmarkChoice == BookmarkSearchChoice.cancel) {
@@ -552,8 +586,8 @@ abstract class SauceStoreBase with Store {
           if (bookmarkEvent != null) return bookmarkEvent;
           _updateSessionStep(
             ReverseImageSessionStepId.bookmarks,
-            ReverseImageSessionStepState.noMatch,
-            detail: 'No bookmark candidate was confirmed',
+            _bookmarkTerminalStepState,
+            detail: _bookmarkTerminalDetail,
           );
         }
       } else {
@@ -777,6 +811,7 @@ abstract class SauceStoreBase with Store {
   }) async {
     PixivBookmarkVisualSearchController? controller;
     _lastBookmarkSearchStatus = null;
+    _lastBookmarkSearchDetail = null;
     try {
       phase.value = SauceSearchPhase.inspecting;
       const limits = BookmarkVisualSearchLimits(
@@ -816,6 +851,11 @@ abstract class SauceStoreBase with Store {
         }
         result = searchResult;
         _lastBookmarkSearchStatus = result.status;
+        if (result.status == BookmarkVisualSearchStatus.failed) {
+          _lastBookmarkSearchDetail = describeBookmarkVisualSearchFailure(
+            result.error,
+          );
+        }
         phase.value = SauceSearchPhase.inspecting;
 
         final canReviewCandidates = switch (result.status) {
@@ -887,6 +927,8 @@ abstract class SauceStoreBase with Store {
           );
           if (!cached) {
             _lastBookmarkSearchStatus = BookmarkVisualSearchStatus.failed;
+            _lastBookmarkSearchDetail =
+                'Confirmed candidate could not be cached';
             final chinese =
                 Localizations.localeOf(context).languageCode == 'zh';
             BotToast.showText(
@@ -955,6 +997,7 @@ abstract class SauceStoreBase with Store {
       return null;
     } catch (error, stackTrace) {
       _lastBookmarkSearchStatus = BookmarkVisualSearchStatus.failed;
+      _lastBookmarkSearchDetail = describeBookmarkVisualSearchFailure(error);
       LPrinter.d('Bookmark visual search failed: $error\n$stackTrace');
       if (!_disposed && context.mounted) {
         final chinese = Localizations.localeOf(context).languageCode == 'zh';
@@ -1017,19 +1060,7 @@ abstract class SauceStoreBase with Store {
         _updateSessionStep(
           ReverseImageSessionStepId.bookmarks,
           stepState,
-          detail: switch (bookmarkStatus) {
-            BookmarkVisualSearchStatus.cancelled => 'Bookmark scan cancelled',
-            BookmarkVisualSearchStatus.limitReached =>
-              'Bookmark scan limit reached',
-            BookmarkVisualSearchStatus.incomplete =>
-              'Bookmark scan was incomplete',
-            BookmarkVisualSearchStatus.failed => 'Bookmark scan failed',
-            BookmarkVisualSearchStatus.accountChanged =>
-              'Pixiv account changed during the scan',
-            BookmarkVisualSearchStatus.unauthenticated =>
-              'No signed-in Pixiv account',
-            _ => 'No bookmark candidate was confirmed',
-          },
+          detail: _bookmarkTerminalDetail,
         );
         phase.value = sessionCandidates.isEmpty
             ? SauceSearchPhase.noResult
@@ -1047,6 +1078,7 @@ abstract class SauceStoreBase with Store {
     final token = _externalCancelToken;
     if (_disposed || token == null || token.isCancelled) return;
     token.cancel('Cancelled by user');
+    _iqdbCancelToken?.cancel('Cancelled by user');
     for (final stepId in const <ReverseImageSessionStepId>[
       ReverseImageSessionStepId.sauceNao,
       ReverseImageSessionStepId.iqdb,
@@ -1356,7 +1388,9 @@ abstract class SauceStoreBase with Store {
     ReverseImageProbeKind probe,
   ) async {
     final cancelToken = CancelToken();
+    final iqdbCancelToken = CancelToken();
     _externalCancelToken = cancelToken;
+    _iqdbCancelToken = iqdbCancelToken;
     _updateSessionStep(
       ReverseImageSessionStepId.sauceNao,
       ReverseImageSessionStepState.running,
@@ -1388,7 +1422,13 @@ abstract class SauceStoreBase with Store {
           _searchSauceProvider(bytes, extension, probe, cancelToken),
         ),
         recordWhenReady(
-          _searchIqdbProvider(bytes, extension, probe, cancelToken),
+          _searchIqdbProvider(
+            bytes,
+            extension,
+            probe,
+            iqdbCancelToken,
+            cancelToken,
+          ),
         ),
       ]);
       return branches[0]
@@ -1397,6 +1437,9 @@ abstract class SauceStoreBase with Store {
     } finally {
       if (identical(_externalCancelToken, cancelToken)) {
         _externalCancelToken = null;
+      }
+      if (identical(_iqdbCancelToken, iqdbCancelToken)) {
+        _iqdbCancelToken = null;
       }
     }
   }
@@ -1437,7 +1480,7 @@ abstract class SauceStoreBase with Store {
 
     if (!cancelToken.isCancelled &&
         sauceResults != null &&
-        sauceResults.exactMatches.isEmpty) {
+        !sauceResults.hasPixivCandidates) {
       _updateSessionStep(
         ReverseImageSessionStepId.sauceNao,
         ReverseImageSessionStepState.running,
@@ -1535,7 +1578,8 @@ abstract class SauceStoreBase with Store {
     Uint8List bytes,
     String extension,
     ReverseImageProbeKind probe,
-    CancelToken cancelToken,
+    CancelToken requestCancelToken,
+    CancelToken sessionCancelToken,
   ) async {
     final hits = <ReverseImageProviderHit>[];
     final messages = <String>[];
@@ -1544,9 +1588,9 @@ abstract class SauceStoreBase with Store {
     try {
       final iqdbResponse = await _iqdbProvider.searchWithCancel(
         ReverseImageQuery(bytes: bytes, extension: extension, probe: probe),
-        cancelToken: cancelToken,
+        cancelToken: requestCancelToken,
       );
-      if (cancelToken.isCancelled) {
+      if (sessionCancelToken.isCancelled) {
         // Cancellation is a user action, not a provider failure.
       } else if (iqdbResponse.serviceMessage == null) {
         successfulProviders++;
@@ -1554,7 +1598,7 @@ abstract class SauceStoreBase with Store {
         messages.add(iqdbResponse.serviceMessage!);
         LPrinter.d('IQDB provider unavailable: ${iqdbResponse.serviceMessage}');
       }
-      if (!cancelToken.isCancelled) hits.addAll(iqdbResponse.hits);
+      if (!sessionCancelToken.isCancelled) hits.addAll(iqdbResponse.hits);
     } catch (error, stackTrace) {
       const message = 'IQDB returned an unsupported response';
       messages.add(message);
@@ -1563,14 +1607,14 @@ abstract class SauceStoreBase with Store {
 
     _updateSessionStep(
       ReverseImageSessionStepId.iqdb,
-      cancelToken.isCancelled
+      sessionCancelToken.isCancelled
           ? ReverseImageSessionStepState.cancelled
           : successfulProviders > 0
           ? (hits.isNotEmpty
                 ? ReverseImageSessionStepState.succeeded
                 : ReverseImageSessionStepState.noMatch)
           : ReverseImageSessionStepState.failed,
-      detail: cancelToken.isCancelled
+      detail: sessionCancelToken.isCancelled
           ? 'Cancelled by user'
           : successfulProviders > 0
           ? '${hits.length} candidate(s)'

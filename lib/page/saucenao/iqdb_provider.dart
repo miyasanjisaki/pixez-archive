@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
@@ -6,6 +7,7 @@ import 'package:pixez/utils/reverse_image_search.dart';
 
 class IqdbSearchProvider implements ReverseImageSearchProvider {
   static const int maxInputBytes = 8 * 1024 * 1024;
+  static const Duration defaultTotalTimeout = Duration(seconds: 30);
   static const List<String> _safeServiceIds = [
     '1',
     '2',
@@ -18,9 +20,11 @@ class IqdbSearchProvider implements ReverseImageSearchProvider {
   ];
 
   final Dio dio;
+  final Duration totalTimeout;
 
-  IqdbSearchProvider({Dio? dio})
-    : dio =
+  IqdbSearchProvider({Dio? dio, this.totalTimeout = defaultTotalTimeout})
+    : assert(totalTimeout > Duration.zero),
+      dio =
           dio ??
           Dio(
             BaseOptions(
@@ -67,12 +71,27 @@ class IqdbSearchProvider implements ReverseImageSearchProvider {
       ),
     );
 
+    final activeCancelToken = cancelToken ?? CancelToken();
+
     try {
-      final response = await dio.post<dynamic>(
-        '/',
-        data: form,
-        cancelToken: cancelToken,
-      );
+      final response = await dio
+          .post<dynamic>('/', data: form, cancelToken: activeCancelToken)
+          .timeout(
+            totalTimeout,
+            onTimeout: () {
+              if (activeCancelToken.isCancelled) {
+                throw DioException(
+                  requestOptions: RequestOptions(path: '/'),
+                  type: DioExceptionType.cancel,
+                  error: 'IQDB search cancelled',
+                );
+              }
+              // The deadline owns this request token. Callers that need to
+              // keep other providers alive must pass a dedicated IQDB token.
+              activeCancelToken.cancel('IQDB total timeout');
+              throw TimeoutException('IQDB total timeout', totalTimeout);
+            },
+          );
       final html = switch (response.data) {
         String value => value,
         List<int> value => utf8.decode(value, allowMalformed: true),
@@ -83,6 +102,10 @@ class IqdbSearchProvider implements ReverseImageSearchProvider {
       );
     } on IqdbResponseException catch (error) {
       return ReverseImageProviderResponse(serviceMessage: error.message);
+    } on TimeoutException {
+      return ReverseImageProviderResponse(
+        serviceMessage: 'IQDB timed out after ${totalTimeout.inSeconds}s',
+      );
     } on DioException catch (error) {
       if (CancelToken.isCancel(error)) {
         return const ReverseImageProviderResponse(

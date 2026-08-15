@@ -107,8 +107,8 @@ String? _extractThumbnailUrl(Element table) {
       : table.querySelectorAll('img');
   for (final image in images) {
     for (final attribute in const <String>[
-      'data-src',
       'data-original',
+      'data-src',
       'src',
     ]) {
       final normalized = _normalizeProviderAssetUrl(

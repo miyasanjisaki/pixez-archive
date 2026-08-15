@@ -92,6 +92,49 @@ void main() {
     );
   });
 
+  test('prefers the provider high-resolution thumbnail attribute', () {
+    const html = '''
+      <div class="result">
+        <div class="resultimage">
+          <img data-src="/thumbs/small.jpg"
+               data-original="/thumbs/larger.jpg">
+        </div>
+        <div class="resultsimilarityinfo">72.50%</div>
+        <a href="https://www.pixiv.net/artworks/12345678">Pixiv</a>
+      </div>
+    ''';
+
+    final result = parseSauceNaoPixivResults(html);
+    expect(result.hasPixivCandidates, isTrue);
+    expect(
+      result.possibleMatches.single.thumbnailUrl,
+      'https://saucenao.com/thumbs/larger.jpg',
+    );
+  });
+
+  test('requests the all-index fallback only without Pixiv candidates', () {
+    expect(
+      const SauceNaoPixivResults(
+        exactMatches: <SauceNaoPixivCandidate>[],
+        possibleMatches: <SauceNaoPixivCandidate>[],
+      ).hasPixivCandidates,
+      isFalse,
+    );
+    expect(
+      const SauceNaoPixivResults(
+        exactMatches: <SauceNaoPixivCandidate>[],
+        possibleMatches: <SauceNaoPixivCandidate>[],
+        externalMatches: <SauceNaoExternalCandidate>[
+          SauceNaoExternalCandidate(
+            similarity: 70,
+            sourceUrl: 'https://example.com/source',
+          ),
+        ],
+      ).hasPixivCandidates,
+      isFalse,
+    );
+  });
+
   test('normalizes a protocol-relative generic result thumbnail', () {
     const html = '''
       <div class="result">

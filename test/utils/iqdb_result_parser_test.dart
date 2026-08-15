@@ -57,6 +57,28 @@ void main() {
     );
   });
 
+  test('prefers the provider high-resolution thumbnail attribute', () {
+    const html = '''
+      <div class="pages">
+        <table>
+          <tr><th>Possible match</th></tr>
+          <tr><td class="image">
+            <a href="https://www.pixiv.net/artworks/87654321">
+              <img data-src="/thumbs/small.jpg"
+                   data-original="/thumbs/larger.jpg">
+            </a>
+          </td></tr>
+          <tr><td>Pixiv [64%]</td></tr>
+        </table>
+      </div>
+    ''';
+
+    expect(
+      parseIqdbResults(html).single.thumbnailUrl,
+      'https://safe.iqdb.org/thumbs/larger.jpg',
+    );
+  });
+
   test(
     'extracts only an explicitly labelled Pixiv ID from mirror metadata',
     () {

@@ -114,4 +114,55 @@ void main() {
     expect(result.evidence, hasLength(2));
     expect(result.thumbnailUrl, 'https://safe.iqdb.org/thumb.jpg');
   });
+
+  test('selects Pixiv square-medium candidate previews only', () {
+    expect(
+      extractPixivCandidateThumbnailUrl({
+        'illust': {
+          'page_count': 1,
+          'image_urls': {
+            'square_medium':
+                'https://i.pximg.net/c/360x360_70/img-master/example.jpg',
+            'medium': 'https://i.pximg.net/medium.jpg',
+          },
+        },
+      }),
+      contains('/360x360_70/'),
+    );
+    expect(
+      extractPixivCandidateThumbnailUrl({
+        'illust': {
+          'page_count': 1,
+          'image_urls': {
+            'square_medium': 'https://tracker.example/candidate.jpg',
+            'medium': 'http://i.pximg.net/insecure.jpg',
+          },
+        },
+      }),
+      isNull,
+    );
+    expect(
+      extractPixivCandidateThumbnailUrl({
+        'illust': {
+          'page_count': 1,
+          'image_urls': {
+            'square_medium': 'https://tracker.example/candidate.jpg',
+            'medium': 'https://i.pximg.net/medium-fallback.jpg',
+          },
+        },
+      }),
+      'https://i.pximg.net/medium-fallback.jpg',
+    );
+    expect(
+      extractPixivCandidateThumbnailUrl({
+        'illust': {
+          'page_count': 2,
+          'image_urls': {
+            'square_medium': 'https://i.pximg.net/p0-would-be-wrong.jpg',
+          },
+        },
+      }),
+      isNull,
+    );
+  });
 }

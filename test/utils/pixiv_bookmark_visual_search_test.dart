@@ -1,8 +1,60 @@
+import 'dart:async';
+
+import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pixez/utils/bookmark_visual_search.dart';
 import 'package:pixez/utils/pixiv_bookmark_visual_search.dart';
 
 void main() {
+  group('bookmark visual failure details', () {
+    test('keeps the query-image limit aligned with local inspection', () {
+      expect(maximumBookmarkFingerprintPixels, 32 * 1024 * 1024);
+    });
+
+    test('reports decode and timeout failures without request details', () {
+      expect(
+        describeBookmarkVisualSearchFailure(
+          const BookmarkVisualQueryImageException(
+            'private filename and dimensions',
+          ),
+        ),
+        'Selected image could not be decoded for bookmark comparison',
+      );
+      expect(
+        describeBookmarkVisualSearchFailure(
+          TimeoutException('https://app-api.pixiv.net/private-token'),
+        ),
+        'Pixiv bookmark request timed out',
+      );
+    });
+
+    test('does not blame malformed Pixiv data on the selected image', () {
+      expect(
+        describeBookmarkVisualSearchFailure(
+          const FormatException('invalid next_url scope'),
+        ),
+        'Pixiv bookmark data could not be processed',
+      );
+    });
+
+    test('classifies expired authentication without leaking the URL', () {
+      final detail = describeBookmarkVisualSearchFailure(
+        DioException(
+          requestOptions: RequestOptions(
+            path: 'https://app-api.pixiv.net/private-token',
+          ),
+          response: Response<void>(
+            requestOptions: RequestOptions(path: '/bookmarks'),
+            statusCode: 401,
+          ),
+          type: DioExceptionType.badResponse,
+        ),
+      );
+      expect(detail, contains('login expired'));
+      expect(detail, isNot(contains('private-token')));
+    });
+  });
+
   group('parsePixivBookmarkVisualPage', () {
     test('selects API medium URLs for single and every meta page', () {
       final page = parsePixivBookmarkVisualPage(

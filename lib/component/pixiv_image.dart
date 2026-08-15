@@ -51,6 +51,7 @@ class PixEzCacheHeaderData {
 class PixivImage extends StatefulWidget {
   final String url;
   final Widget? placeWidget;
+  final Widget? errorWidget;
   final bool fade;
   final BoxFit? fit;
   final bool? enableMemoryCache;
@@ -66,6 +67,7 @@ class PixivImage extends StatefulWidget {
   PixivImage(
     this.url, {
     this.placeWidget,
+    this.errorWidget,
     this.fade = true,
     this.fit,
     this.enableMemoryCache,
@@ -244,17 +246,20 @@ class _PixivImageState extends State<PixivImage> {
           ),
         );
       },
-      errorWidget: (context, url, _) => Container(
-        height: height,
-        child: Center(
-          child: TextButton(
-            onPressed: () {
-              setState(() {});
-            },
-            child: Text(":("),
+      errorWidget: (context, url, _) {
+        if (widget.errorWidget != null) return widget.errorWidget!;
+        return Container(
+          height: height,
+          child: Center(
+            child: TextButton(
+              onPressed: () {
+                setState(() {});
+              },
+              child: Text(":("),
+            ),
           ),
-        ),
-      ),
+        );
+      },
       fadeInDuration: widget.optimizeForList
           ? Duration.zero
           : const Duration(milliseconds: 500),

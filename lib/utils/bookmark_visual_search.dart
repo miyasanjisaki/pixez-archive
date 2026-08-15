@@ -20,6 +20,15 @@ enum BookmarkVisualSearchStatus {
 
 enum BookmarkVisualMatchKind { exactBytes, exactPerceptual, nearPerceptual }
 
+/// Marks a failure that happened while decoding the user-selected query image.
+///
+/// Candidate downloads and Pixiv page parsing can also throw
+/// [FormatException]. Keeping this subtype distinct prevents the UI from
+/// incorrectly blaming the selected image for malformed remote data.
+class BookmarkVisualQueryImageException extends FormatException {
+  const BookmarkVisualQueryImageException(super.message);
+}
+
 class BookmarkVisualImageReference {
   final int pageIndex;
   final String url;
@@ -305,7 +314,9 @@ class BookmarkVisualSearchService {
         status: BookmarkVisualSearchStatus.failed,
         candidates: const <BookmarkVisualCandidate>[],
         progress: progress,
-        error: const FormatException('The query image is empty'),
+        error: const BookmarkVisualQueryImageException(
+          'The query image is empty',
+        ),
       );
     }
 
@@ -326,7 +337,9 @@ class BookmarkVisualSearchService {
         status: BookmarkVisualSearchStatus.failed,
         candidates: const <BookmarkVisualCandidate>[],
         progress: progress,
-        error: error,
+        error: BookmarkVisualQueryImageException(
+          'The query image could not be decoded for visual comparison',
+        ),
         stackTrace: stackTrace,
       );
     }
@@ -337,7 +350,7 @@ class BookmarkVisualSearchService {
         status: BookmarkVisualSearchStatus.failed,
         candidates: const <BookmarkVisualCandidate>[],
         progress: progress,
-        error: const FormatException(
+        error: const BookmarkVisualQueryImageException(
           'The query image could not be decoded for visual comparison',
         ),
       );

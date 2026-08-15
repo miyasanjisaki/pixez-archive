@@ -4,7 +4,9 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_mobx/flutter_mobx.dart';
+import 'package:pixez/component/pixiv_image.dart';
 import 'package:pixez/custom_tab_plugin.dart';
+import 'package:pixez/network/api_client.dart';
 import 'package:pixez/page/picture/illust_lighting_page.dart';
 import 'package:pixez/page/saucenao/sauce_store.dart';
 import 'package:pixez/utils/reverse_image_search.dart';
@@ -23,6 +25,9 @@ class ReverseImageSearchPanel extends StatefulWidget {
 class _ReverseImageSearchPanelState extends State<ReverseImageSearchPanel>
     with AutomaticKeepAliveClientMixin {
   final ScrollController _scrollController = ScrollController();
+  final Map<int, Future<String?>> _pixivThumbnailUrls = {};
+  final Map<String, Future<Uint8List?>> _providerThumbnailBytes = {};
+  Uint8List? _thumbnailQueryBytes;
   Timer? _elapsedTimer;
 
   bool get _isChinese =>
@@ -52,6 +57,11 @@ class _ReverseImageSearchPanelState extends State<ReverseImageSearchPanel>
     return Observer(
       builder: (context) {
         final bytes = widget.store.selectedImageBytes.value;
+        if (!identical(_thumbnailQueryBytes, bytes)) {
+          _thumbnailQueryBytes = bytes;
+          _pixivThumbnailUrls.clear();
+          _providerThumbnailBytes.clear();
+        }
         final busy = widget.store.searchBusy.value;
         final candidates = widget.store.sessionCandidates.toList(
           growable: false,
@@ -453,9 +463,7 @@ class _ReverseImageSearchPanelState extends State<ReverseImageSearchPanel>
             children: [
               ClipRRect(
                 borderRadius: BorderRadius.circular(10),
-                child: candidate.thumbnailUrl == null
-                    ? _candidatePlaceholder(context)
-                    : TrustedProviderThumbnail(url: candidate.thumbnailUrl!),
+                child: _buildCandidateThumbnail(context, candidate),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -524,6 +532,59 @@ class _ReverseImageSearchPanelState extends State<ReverseImageSearchPanel>
     alignment: Alignment.center,
     child: const Icon(Icons.image_not_supported_outlined, size: 34),
   );
+
+  Widget _buildCandidateThumbnail(
+    BuildContext context,
+    ReverseImageDisplayCandidate candidate,
+  ) {
+    final providerFallback = candidate.thumbnailUrl == null
+        ? _candidatePlaceholder(context)
+        : TrustedProviderThumbnail(
+            future: _providerThumbnailFuture(candidate.thumbnailUrl!),
+          );
+    final illustId = candidate.illustId;
+    if (illustId == null) return providerFallback;
+
+    return FutureBuilder<String?>(
+      future: _pixivThumbnailFuture(illustId),
+      builder: (context, snapshot) {
+        final pixivUrl = snapshot.data;
+        if (pixivUrl == null) return providerFallback;
+        return PixivImage(
+          pixivUrl,
+          width: 96,
+          height: 96,
+          fit: BoxFit.cover,
+          fade: false,
+          optimizeForList: true,
+          placeWidget: _candidatePlaceholder(context),
+          errorWidget: providerFallback,
+        );
+      },
+    );
+  }
+
+  Future<String?> _pixivThumbnailFuture(int illustId) {
+    final existing = _pixivThumbnailUrls[illustId];
+    if (existing != null) return existing;
+    // Candidate details are loaded lazily, but cap the extra Pixiv requests for
+    // unusually large result sets. Provider thumbnails remain available.
+    if (_pixivThumbnailUrls.length >= 12) return Future<String?>.value(null);
+    final future = _loadPixivCandidateThumbnailUrl(illustId);
+    _pixivThumbnailUrls[illustId] = future;
+    return future;
+  }
+
+  Future<Uint8List?> _providerThumbnailFuture(String url) {
+    final existing = _providerThumbnailBytes[url];
+    if (existing != null) return existing;
+    if (_providerThumbnailBytes.length >= 64) {
+      _providerThumbnailBytes.remove(_providerThumbnailBytes.keys.first);
+    }
+    final future = loadTrustedReverseImageThumbnail(url);
+    _providerThumbnailBytes[url] = future;
+    return future;
+  }
 
   Widget _confidenceChip(
     BuildContext context,
@@ -682,6 +743,7 @@ class _ReverseImageSearchPanelState extends State<ReverseImageSearchPanel>
       };
 
   String _formatDuration(Duration duration) {
+    if (duration > Duration.zero && duration.inSeconds == 0) return '<1s';
     final minutes = duration.inMinutes;
     final seconds = duration.inSeconds.remainder(60);
     return minutes > 0 ? '${minutes}m ${seconds}s' : '${seconds}s';
@@ -691,46 +753,37 @@ class _ReverseImageSearchPanelState extends State<ReverseImageSearchPanel>
   bool get wantKeepAlive => true;
 }
 
-class TrustedProviderThumbnail extends StatefulWidget {
-  final String url;
-
-  const TrustedProviderThumbnail({super.key, required this.url});
-
-  @override
-  State<TrustedProviderThumbnail> createState() =>
-      _TrustedProviderThumbnailState();
+Future<String?> _loadPixivCandidateThumbnailUrl(int illustId) async {
+  try {
+    final response = await apiClient.getIllustDetail(illustId);
+    return extractPixivCandidateThumbnailUrl(response.data);
+  } on Object {
+    // Deleted/restricted works and transient Pixiv errors keep the provider
+    // thumbnail instead of turning the result card into an error state.
+  }
+  return null;
 }
 
-class _TrustedProviderThumbnailState extends State<TrustedProviderThumbnail> {
-  late Future<Uint8List?> _future;
+class TrustedProviderThumbnail extends StatelessWidget {
+  final Future<Uint8List?> future;
 
-  @override
-  void initState() {
-    super.initState();
-    _future = loadTrustedReverseImageThumbnail(widget.url);
-  }
-
-  @override
-  void didUpdateWidget(covariant TrustedProviderThumbnail oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.url != widget.url) {
-      _future = loadTrustedReverseImageThumbnail(widget.url);
-    }
-  }
+  const TrustedProviderThumbnail({super.key, required this.future});
 
   @override
   Widget build(BuildContext context) {
     return FutureBuilder<Uint8List?>(
-      future: _future,
+      future: future,
       builder: (context, snapshot) {
         final bytes = snapshot.data;
         if (bytes != null) {
+          final devicePixelRatio = MediaQuery.devicePixelRatioOf(context);
           return Image.memory(
             bytes,
             width: 96,
             height: 96,
-            cacheWidth: 288,
+            cacheWidth: (96 * devicePixelRatio).ceil().clamp(192, 512).toInt(),
             fit: BoxFit.cover,
+            filterQuality: FilterQuality.high,
             errorBuilder: (_, __, ___) => _placeholder(context),
           );
         }
