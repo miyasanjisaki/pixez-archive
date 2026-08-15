@@ -76,6 +76,7 @@ abstract class _LightingStoreBase with Store {
       GlanceIllustPersistProvider();
 
   dispose() {
+    _dataGeneration++;
     // iStores.forEach((element) {
     //   final provider = ExtendedNetworkImageProvider(
     //     element.illusts.imageUrls.medium,
@@ -89,6 +90,10 @@ abstract class _LightingStoreBase with Store {
   String? errorMessage;
 
   _LightingStoreBase(this.source);
+
+  int _dataGeneration = 0;
+  int? _fetchGenerationInProgress;
+  int? _nextGenerationInProgress;
 
   bool okForUser(Illusts illust) {
     // if (userSetting.hIsNotAllow)
@@ -111,31 +116,43 @@ abstract class _LightingStoreBase with Store {
     return true;
   }
 
-  bool _lock = false;
-
-  bool get requestInProgress => _lock;
+  bool get requestInProgress =>
+      _fetchGenerationInProgress == _dataGeneration ||
+      _nextGenerationInProgress == _dataGeneration;
 
   @action
   Future<bool> fetch({String? url, bool force = false}) async {
-    if (_lock) return false;
-    _lock = true;
+    final generation = ++_dataGeneration;
+    final selectedSource = source;
+    _fetchGenerationInProgress = generation;
+    if (_nextGenerationInProgress != null) {
+      easyRefreshController?.finishLoad(IndicatorResult.fail);
+    }
+    easyRefreshController?.resetFooter();
     nextUrl = null;
     errorMessage = null;
     refreshing = true;
     try {
       Response? result = null;
-      if (source is ApiSource) {
-        result = await (source as ApiSource).fetch();
-      } else if (source is ApiForceSource) {
-        result = await (source as ApiForceSource).fetch(force);
+      if (selectedSource is ApiSource) {
+        result = await selectedSource.fetch();
+      } else if (selectedSource is ApiForceSource) {
+        result = await selectedSource.fetch(force);
       }
+      if (generation != _dataGeneration) return false;
 
       Recommend recommend = Recommend.fromJson(result!.data);
       //https://app-api.pixiv.net/v1/user/illusts?filter=for_android&user_id=${user_id}&type=illust&offset=30
       nextUrl = recommend.nextUrl;
-      iStores.clear();
-      iStores.addAll(recommend.illusts.map((e) => IllustStore(e.id, e)));
-      String? glanceKey = source.glanceKey;
+      if (nextUrl?.isNotEmpty == true) {
+        easyRefreshController?.resetFooter();
+      } else {
+        easyRefreshController?.finishLoad(IndicatorResult.noMore);
+      }
+      iStores
+        ..clear()
+        ..addAll(_uniqueStores(recommend.illusts));
+      String? glanceKey = selectedSource.glanceKey;
       refreshing = false;
       if (glanceKey != null && glanceKey.isNotEmpty) {
         await glanceIllustPersistProvider.open();
@@ -148,15 +165,19 @@ abstract class _LightingStoreBase with Store {
               ),
         );
       }
+      if (generation != _dataGeneration) return false;
       easyRefreshController?.finishRefresh(IndicatorResult.success);
       return true;
     } catch (e) {
+      if (generation != _dataGeneration) return false;
       refreshing = false;
       errorMessage = e.toString();
       easyRefreshController?.finishRefresh(IndicatorResult.fail);
       return false;
     } finally {
-      _lock = false;
+      if (_fetchGenerationInProgress == generation) {
+        _fetchGenerationInProgress = null;
+      }
     }
   }
 
@@ -168,30 +189,63 @@ abstract class _LightingStoreBase with Store {
 
   @action
   Future<bool> fetchNext() async {
-    if (_lock) return false;
-    _lock = true;
+    final generation = _dataGeneration;
+    if (_nextGenerationInProgress == generation) {
+      // A scroll listener may fire repeatedly while the same page is loading.
+      // The in-flight request will finish the footer; do not flash a false
+      // failure for these duplicate notifications.
+      return false;
+    }
+    if (_fetchGenerationInProgress == generation) {
+      easyRefreshController?.finishLoad(IndicatorResult.fail);
+      return false;
+    }
+    _nextGenerationInProgress = generation;
     errorMessage = null;
     try {
       if (nextUrl != null && nextUrl!.isNotEmpty) {
-        Response result = await apiClient.getNext(nextUrl!);
+        final requestedUrl = nextUrl!;
+        Response result = await apiClient.getNext(requestedUrl);
+        if (generation != _dataGeneration) return false;
         Recommend recommend = Recommend.fromJson(result.data);
         nextUrl = recommend.nextUrl;
-        var map = recommend.illusts.map((e) => IllustStore(e.id, e));
-        if (portal == "new") {
-          var iterable = iStores.map((element) => element.id);
-          map = map.where((element) => !iterable.contains(element.id));
-        }
-        iStores.addAll(map);
-        easyRefreshController?.finishLoad(IndicatorResult.success);
+        iStores.addAll(
+          _uniqueStores(
+            recommend.illusts,
+            existingIds: iStores.map((store) => store.id).toSet(),
+          ),
+        );
+        easyRefreshController?.finishLoad(
+          nextUrl?.isNotEmpty == true
+              ? IndicatorResult.success
+              : IndicatorResult.noMore,
+        );
       } else {
         easyRefreshController?.finishLoad(IndicatorResult.noMore);
       }
       return true;
     } catch (e) {
-      easyRefreshController?.finishLoad(IndicatorResult.fail);
+      if (generation == _dataGeneration) {
+        errorMessage = e.toString();
+        easyRefreshController?.finishLoad(IndicatorResult.fail);
+      }
       return false;
     } finally {
-      _lock = false;
+      if (_nextGenerationInProgress == generation) {
+        _nextGenerationInProgress = null;
+      }
+    }
+  }
+
+  Iterable<IllustStore> _uniqueStores(
+    Iterable<Illusts> illusts, {
+    Set<int>? existingIds,
+  }) sync* {
+    final seenIds = existingIds ?? <int>{};
+    for (final illust in illusts) {
+      if (seenIds.add(illust.id)) {
+        yield IllustStore(illust.id, illust);
+      }
     }
   }
 }

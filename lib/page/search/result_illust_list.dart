@@ -16,7 +16,6 @@
 
 import 'dart:async';
 
-import 'package:bot_toast/bot_toast.dart';
 import 'package:flutter/material.dart';
 import 'package:pixez/er/prefer.dart';
 import 'package:pixez/i18n.dart';
@@ -99,6 +98,12 @@ class _ResultIllustListState extends State<ResultIllustList> {
   bool recordRememberCurrentSelection = false;
   bool inited = false;
 
+  bool get _usesOfficialPopularPreview =>
+      selectSort == 'popular_desc' && accountStore.now?.isPremium != 1;
+
+  bool get _usesExpandedPopularPreview =>
+      _usesOfficialPopularPreview && _dateTimeRange == null;
+
   @override
   void initState() {
     super.initState();
@@ -128,6 +133,11 @@ class _ResultIllustListState extends State<ResultIllustList> {
       if (recordRememberCurrentSelection) {
         searchTarget = Prefer.getString(searchTargetKey) ?? search_target[0];
         selectSort = Prefer.getString(searchSortKey) ?? "date_desc";
+        if (accountStore.now?.isPremium != 1 &&
+            (selectSort == 'popular_male_desc' ||
+                selectSort == 'popular_female_desc')) {
+          selectSort = 'popular_desc';
+        }
         searchAIType = Prefer.getInt(searchAIKey) ?? 0;
         ugoiraFilter = _enumValueOr(
           UgoiraFilter.values,
@@ -184,6 +194,7 @@ class _ResultIllustListState extends State<ResultIllustList> {
       children: <Widget>[
         _buildSearchToolbar(context),
         if (_hasActiveResultOptions) _buildActiveResultOptions(context),
+        if (_usesOfficialPopularPreview) _buildPopularPreviewNotice(context),
         Expanded(
           child: !inited
               ? const Center(child: CircularProgressIndicator())
@@ -202,6 +213,46 @@ class _ResultIllustListState extends State<ResultIllustList> {
                 ),
         ),
       ],
+    );
+  }
+
+  Widget _buildPopularPreviewNotice(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: colorScheme.secondaryContainer.withValues(alpha: 0.7),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Icons.local_fire_department_outlined,
+                  color: colorScheme.onSecondaryContainer),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(I18n.of(context).popular_preview_expanded,
+                        style: Theme.of(context).textTheme.titleSmall),
+                    const SizedBox(height: 2),
+                    Text(
+                      _usesExpandedPopularPreview
+                          ? I18n.of(context).popular_preview_expanded_hint
+                          : I18n.of(context).popular_preview_single_hint,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -389,6 +440,29 @@ class _ResultIllustListState extends State<ResultIllustList> {
   }
 
   _changeQueryParams() {
+    final keyword = _starValue == 0
+        ? widget.word
+        : '${widget.word} ${_starValue}users入り';
+    if (_usesOfficialPopularPreview) {
+      final searchAiType =
+          searchAIType == 1 || muteStore.banAIIllust ? 1 : searchAIType;
+      futureGet = ApiForceSource(
+        futureGet: (bool force) => _usesExpandedPopularPreview
+            ? apiClient.getExpandedPopularPreview(
+                keyword,
+                searchTarget: searchTarget,
+                searchAiType: searchAiType,
+              )
+            : apiClient.getPopularPreview(
+                keyword,
+                searchTarget: searchTarget,
+                searchAiType: searchAiType,
+                startDate: _dateTimeRange?.start,
+                endDate: _dateTimeRange?.end,
+              ),
+      );
+      return;
+    }
     if (_starValue == 0)
       futureGet = ApiForceSource(
           futureGet: (bool e) => apiClient.getSearchIllust(widget.word,
@@ -421,13 +495,6 @@ class _ResultIllustListState extends State<ResultIllustList> {
         ugoiraFilter: ugoiraFilter,
         loadedResultSort: loadedResultSort,
         contentFilter: contentFilter,
-        onPremium: () {
-          setState(() {
-            futureGet = ApiForceSource(
-                futureGet: (bool e) =>
-                    apiClient.getPopularPreview(widget.word));
-          });
-        },
         onApply: () {
           final serverQueryChanged = initialSearchAIType != searchAIType ||
               initialSearchTarget != searchTarget ||
@@ -574,7 +641,6 @@ class ResultIllustSortWidget extends StatefulWidget {
   final UgoiraFilter ugoiraFilter;
   final IllustResultSort loadedResultSort;
   final IllustContentFilter contentFilter;
-  final Function onPremium;
   final Function onApply;
   final Function(
       {required String searchTarget,
@@ -592,7 +658,6 @@ class ResultIllustSortWidget extends StatefulWidget {
       required this.ugoiraFilter,
       required this.loadedResultSort,
       required this.contentFilter,
-      required this.onPremium,
       required this.onApply,
       required this.onSateChange});
 
@@ -637,6 +702,7 @@ class _ResultIllustSortWidgetState extends State<ResultIllustSortWidget> {
 
   @override
   Widget build(BuildContext context) {
+    final isPremium = accountStore.now?.isPremium == 1;
     final searchTargetMap = {
       0: I18n.of(context).partial_match_for_tag,
       1: I18n.of(context).exact_match_for_tag,
@@ -645,8 +711,10 @@ class _ResultIllustSortWidgetState extends State<ResultIllustSortWidget> {
     final selectSortMap = {
       0: I18n.of(context).date_desc,
       1: I18n.of(context).date_asc,
-      2: I18n.of(context).popular_desc,
-      if (accountStore.now != null && accountStore.now!.isPremium == 1) ...{
+      2: isPremium
+          ? I18n.of(context).popular_desc
+          : '${I18n.of(context).popular_desc} · ${I18n.of(context).popular_preview_short}',
+      if (isPremium) ...{
         3: I18n.of(context).popular_male_desc,
         4: I18n.of(context).popular_female_desc,
       }
@@ -903,14 +971,6 @@ class _ResultIllustSortWidgetState extends State<ResultIllustSortWidget> {
         title: Text(data.value),
         trailing: selected ? const Icon(Icons.check, size: 20) : null,
         onTap: () {
-          if (accountStore.now != null && data.key == 2) {
-            if (accountStore.now!.isPremium == 0) {
-              BotToast.showText(text: 'not premium');
-              widget.onPremium();
-              Navigator.of(context).pop();
-              return;
-            }
-          }
           setState(() {
             selectSort = value;
           });
@@ -939,4 +999,3 @@ class _ResultIllustSortWidgetState extends State<ResultIllustSortWidget> {
     );
   }
 }
-

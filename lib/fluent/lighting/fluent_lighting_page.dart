@@ -82,6 +82,7 @@ class _LightingListState extends State<LightingList> {
   @override
   void didUpdateWidget(LightingList oldWidget) {
     super.didUpdateWidget(oldWidget);
+    _store.portal = widget.portal;
     if (oldWidget.source != widget.source) {
       _store.source = widget.source;
       _fetch();
@@ -89,7 +90,8 @@ class _LightingListState extends State<LightingList> {
   }
 
   _fetch() async {
-    await _store.fetch(force: true);
+    final loaded = await _store.fetch(force: true);
+    if (!mounted || !loaded) return;
     if (!_isNested &&
         _store.errorMessage == null &&
         !_store.iStores.isEmpty &&
@@ -111,6 +113,7 @@ class _LightingListState extends State<LightingList> {
     _store = LightingStore(
       widget.source,
     );
+    _store.portal = widget.portal;
     _store.easyRefreshController = _refreshController;
     super.initState();
     _store.fetch();
@@ -164,11 +167,11 @@ class _LightingListState extends State<LightingList> {
           controller: _refreshController,
           header: PixezDefault.header(context),
           scrollController: _scrollController,
-          onRefresh: () {
-            _store.fetch(force: true);
+          onRefresh: () async {
+            await _store.fetch(force: true);
           },
-          onLoad: () {
-            _store.fetchNext();
+          onLoad: () async {
+            await _store.fetchNext();
           },
           childBuilder: (context, physics) => WaterfallFlow.builder(
             physics: physics,
@@ -333,11 +336,11 @@ class _LightingListState extends State<LightingList> {
         controller: _refreshController,
         scrollController: _scrollController,
         header: PixezDefault.header(context),
-        onRefresh: () {
-          _store.fetch(force: true);
+        onRefresh: () async {
+          await _store.fetch(force: true);
         },
-        onLoad: () {
-          _store.fetchNext();
+        onLoad: () async {
+          await _store.fetchNext();
         },
         childBuilder: ((context, physics) {
           return CustomScrollView(

@@ -16,7 +16,6 @@
 
 import 'dart:async';
 
-import 'package:bot_toast/bot_toast.dart';
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:pixez/i18n.dart';
 import 'package:pixez/fluent/lighting/fluent_lighting_page.dart';
@@ -92,6 +91,9 @@ class _ResultIllustListState extends State<ResultIllustList> {
   String selectSort = "date_desc";
   IllustResultSort loadedResultSort = IllustResultSort.apiOrder;
   IllustContentFilter contentFilter = IllustContentFilter.all;
+
+  bool get _usesExpandedPopularPreview =>
+      selectSort == 'popular_desc' && accountStore.now?.isPremium != 1;
   int selectStarNum = 0;
   // double starValue = 0.0;
 
@@ -115,17 +117,32 @@ class _ResultIllustListState extends State<ResultIllustList> {
           ],
         ),
       ),
-      content: LightingList(
-        source: futureGet,
-        scrollController: _scrollController,
-        filter: contentFilter == IllustContentFilter.all
-            ? null
-            : _matchesContentFilter,
-        comparator: buildIllustResultComparator<Illusts>(
-          loadedResultSort,
-          bookmarksOf: (illust) => illust.totalBookmarks,
-          viewsOf: (illust) => illust.totalView,
-        ),
+      content: Column(
+        children: [
+          if (_usesExpandedPopularPreview)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+              child: InfoBar(
+                title: Text(I18n.of(context).popular_preview_expanded),
+                content: Text(I18n.of(context).popular_preview_expanded_hint),
+                severity: InfoBarSeverity.info,
+              ),
+            ),
+          Expanded(
+            child: LightingList(
+              source: futureGet,
+              scrollController: _scrollController,
+              filter: contentFilter == IllustContentFilter.all
+                  ? null
+                  : _matchesContentFilter,
+              comparator: buildIllustResultComparator<Illusts>(
+                loadedResultSort,
+                bookmarksOf: (illust) => illust.totalBookmarks,
+                viewsOf: (illust) => illust.totalView,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -136,6 +153,19 @@ class _ResultIllustListState extends State<ResultIllustList> {
   DateTimeRange? _dateTimeRange;
 
   _changeQueryParams() {
+    final keyword = _starValue == 0
+        ? widget.word
+        : '${widget.word} ${_starValue}users入り';
+    if (_usesExpandedPopularPreview) {
+      futureGet = ApiForceSource(
+        futureGet: (bool force) => apiClient.getExpandedPopularPreview(
+          keyword,
+          searchTarget: searchTarget,
+          searchAiType: muteStore.banAIIllust ? 1 : null,
+        ),
+      );
+      return;
+    }
     if (_starValue == 0)
       futureGet = ApiForceSource(
           futureGet: (bool e) => apiClient.getSearchIllust(widget.word,
@@ -220,7 +250,9 @@ class _ResultIllustListState extends State<ResultIllustList> {
                               value: 1,
                             ),
                             ComboBoxItem(
-                              child: Text(I18n.of(context).popular_desc),
+                              child: Text(isPremium
+                                  ? I18n.of(context).popular_desc
+                                  : '${I18n.of(context).popular_desc} · ${I18n.of(context).popular_preview_short}'),
                               value: 2,
                             ),
                             if (isPremium) ...[
@@ -238,16 +270,6 @@ class _ResultIllustListState extends State<ResultIllustList> {
                           ],
                           onChanged: (int? index) {
                             if (index == null) return;
-                            if (!isPremium && index == 2) {
-                              BotToast.showText(text: 'not premium');
-                              setState(() {
-                                futureGet = ApiForceSource(
-                                    futureGet: (bool e) =>
-                                        apiClient.getPopularPreview(widget.word));
-                              });
-                              Navigator.of(context).pop();
-                              return;
-                            }
                             setS(() {
                               pendingSelectSort = sort[index];
                             });
