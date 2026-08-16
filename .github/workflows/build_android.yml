@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+    tags:
+      - '*'
   pull_request:
   workflow_dispatch:
 
@@ -290,3 +292,58 @@ jobs:
             build/app/outputs/flutter-apk/SHA256SUMS.txt
           if-no-files-found: error
           compression-level: 0
+
+  publish:
+    needs: build
+    name: 发布 Android APK
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+    runs-on: ubuntu-24.04
+    steps:
+      - name: 下载 Android APK 产物
+        uses: actions/download-artifact@v8
+        with:
+          name: android-release-mode-test-apk
+          path: artifacts
+
+      - name: 准备 Release APK 文件
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |-
+          $ErrorActionPreference = 'Stop'
+
+          if ($env:RELEASE_TAG -notmatch '^[0-9A-Za-z][0-9A-Za-z._-]*$') {
+            throw "Unsupported release tag for an asset filename: $env:RELEASE_TAG"
+          }
+
+          $artifactDirectory = Join-Path $PWD 'artifacts'
+          $releaseFiles = @(
+            @{
+              Source = 'app-release.apk'
+              Destination = "PixEz-Archive-$env:RELEASE_TAG-universal.apk"
+            }
+            @{
+              Source = 'app-arm64-v8a-release.apk'
+              Destination = "PixEz-Archive-$env:RELEASE_TAG-arm64-v8a.apk"
+            }
+          )
+
+          foreach ($releaseFile in $releaseFiles) {
+            $source = Join-Path $artifactDirectory $releaseFile.Source
+            if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
+              throw "Required Android APK was not downloaded: $source"
+            }
+            Copy-Item `
+              -LiteralPath $source `
+              -Destination (Join-Path $artifactDirectory $releaseFile.Destination)
+          }
+
+      - name: 上传 Android APK 到 GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          fail_on_unmatched_files: true
+          files: |-
+            artifacts/PixEz-Archive-${{ github.ref_name }}-universal.apk
+            artifacts/PixEz-Archive-${{ github.ref_name }}-arm64-v8a.apk
