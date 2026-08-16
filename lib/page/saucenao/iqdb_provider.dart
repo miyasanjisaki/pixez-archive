@@ -2,6 +2,9 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
+import 'package:pixez/network/external_search_failure.dart';
+import 'package:pixez/network/external_search_transport.dart';
+import 'package:pixez/network/network_mode.dart';
 import 'package:pixez/utils/iqdb_result_parser.dart';
 import 'package:pixez/utils/reverse_image_search.dart';
 
@@ -19,26 +22,20 @@ class IqdbSearchProvider implements ReverseImageSearchProvider {
     '13',
   ];
 
-  final Dio dio;
+  final ExternalSearchDioClient _dioClient;
   final Duration totalTimeout;
 
-  IqdbSearchProvider({Dio? dio, this.totalTimeout = defaultTotalTimeout})
-    : assert(totalTimeout > Duration.zero),
-      dio =
-          dio ??
-          Dio(
-            BaseOptions(
-              baseUrl: 'https://safe.iqdb.org',
-              connectTimeout: const Duration(seconds: 20),
-              sendTimeout: const Duration(seconds: 45),
-              receiveTimeout: const Duration(seconds: 45),
-              followRedirects: true,
-              headers: const {
-                'Accept': 'text/html,application/xhtml+xml',
-                'User-Agent': 'PixEz-Archive reverse-image-search',
-              },
-            ),
-          );
+  IqdbSearchProvider({
+    Dio? dio,
+    NetworkMode networkMode = NetworkMode.standard,
+    NetworkMode Function()? networkModeProvider,
+    this.totalTimeout = defaultTotalTimeout,
+  }) : assert(totalTimeout > Duration.zero),
+       _dioClient = ExternalSearchDioClient(
+         baseUrl: 'https://safe.iqdb.org',
+         networkModeProvider: networkModeProvider ?? () => networkMode,
+         injectedDio: dio,
+       );
 
   @override
   String get id => 'iqdb';
@@ -74,24 +71,26 @@ class IqdbSearchProvider implements ReverseImageSearchProvider {
     final activeCancelToken = cancelToken ?? CancelToken();
 
     try {
-      final response = await dio
-          .post<dynamic>('/', data: form, cancelToken: activeCancelToken)
-          .timeout(
-            totalTimeout,
-            onTimeout: () {
-              if (activeCancelToken.isCancelled) {
-                throw DioException(
-                  requestOptions: RequestOptions(path: '/'),
-                  type: DioExceptionType.cancel,
-                  error: 'IQDB search cancelled',
-                );
-              }
-              // The deadline owns this request token. Callers that need to
-              // keep other providers alive must pass a dedicated IQDB token.
-              activeCancelToken.cancel('IQDB total timeout');
-              throw TimeoutException('IQDB total timeout', totalTimeout);
-            },
-          );
+      final response = await _dioClient.run(
+        (dio) => dio
+            .post<dynamic>('/', data: form, cancelToken: activeCancelToken)
+            .timeout(
+              totalTimeout,
+              onTimeout: () {
+                if (activeCancelToken.isCancelled) {
+                  throw DioException(
+                    requestOptions: RequestOptions(path: '/'),
+                    type: DioExceptionType.cancel,
+                    error: 'IQDB search cancelled',
+                  );
+                }
+                // The deadline owns this request token. Callers that need to
+                // keep other providers alive must pass a dedicated IQDB token.
+                activeCancelToken.cancel('IQDB total timeout');
+                throw TimeoutException('IQDB total timeout', totalTimeout);
+              },
+            ),
+      );
       final html = switch (response.data) {
         String value => value,
         List<int> value => utf8.decode(value, allowMalformed: true),
@@ -115,12 +114,10 @@ class IqdbSearchProvider implements ReverseImageSearchProvider {
       final status = error.response?.statusCode;
       return ReverseImageProviderResponse(
         rateLimited: status == 429,
-        serviceMessage: status == null
-            ? 'IQDB network error'
-            : 'IQDB request failed ($status)',
+        serviceMessage: describeExternalSearchFailure('IQDB', error),
       );
     }
   }
 
-  void close() => dio.close(force: true);
+  void close() => _dioClient.close();
 }

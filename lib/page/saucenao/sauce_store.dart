@@ -33,6 +33,8 @@ import 'package:pixez/i18n.dart';
 import 'package:pixez/main.dart';
 import 'package:pixez/models/download_identity_index.dart';
 import 'package:pixez/models/task_persist.dart';
+import 'package:pixez/network/external_search_failure.dart';
+import 'package:pixez/network/external_search_transport.dart';
 import 'package:pixez/page/saucenao/bookmark_visual_search_dialog.dart';
 import 'package:pixez/page/saucenao/iqdb_provider.dart';
 import 'package:pixez/page/webview/ascii2d_browser_search_page.dart';
@@ -83,22 +85,15 @@ abstract class SauceStoreBase with Store {
   static const int _maxSearchDimension = 1600;
   static const int _maxDecodedPixels = 32 * 1024 * 1024;
 
-  final Dio dio = Dio(
-    BaseOptions(
-      baseUrl: 'https://saucenao.com',
-      connectTimeout: const Duration(seconds: 20),
-      sendTimeout: const Duration(seconds: 45),
-      receiveTimeout: const Duration(seconds: 45),
-      followRedirects: true,
-      headers: const {
-        'Accept': 'text/html,application/xhtml+xml',
-        'User-Agent': 'PixEz-Archive reverse-image-search',
-      },
-    ),
+  final ExternalSearchDioClient _sauceDioClient = ExternalSearchDioClient(
+    baseUrl: 'https://saucenao.com',
+    networkModeProvider: () => userSetting.networkMode,
   );
 
   final ObservableList<int> results = ObservableList<int>();
-  final IqdbSearchProvider _iqdbProvider = IqdbSearchProvider();
+  final IqdbSearchProvider _iqdbProvider = IqdbSearchProvider(
+    networkModeProvider: () => userSetting.networkMode,
+  );
   final Observable<SauceSearchPhase> phase = Observable(SauceSearchPhase.idle);
   final Observable<String?> lastError = Observable(null);
   final Observable<String?> selectedFileName = Observable(null);
@@ -164,7 +159,10 @@ abstract class SauceStoreBase with Store {
       (_preparedSearchBytes != null || _selectedOriginBytes != null);
 
   bool get canCancelSearch =>
-      searchBusy.value && _externalCancelToken?.isCancelled == false;
+      searchBusy.value &&
+      (_bookmarkSearchController != null ||
+          _externalCancelToken?.isCancelled == false ||
+          _iqdbCancelToken?.isCancelled == false);
 
   ReverseImageSessionStepState get _bookmarkTerminalStepState =>
       switch (_lastBookmarkSearchStatus) {
@@ -297,7 +295,7 @@ abstract class SauceStoreBase with Store {
     _iqdbCancelToken = null;
     _bookmarkSearchController?.dispose();
     _bookmarkSearchController = null;
-    dio.close(force: true);
+    _sauceDioClient.close();
     _iqdbProvider.close();
     unawaited(_streamController.close());
   }
@@ -588,6 +586,12 @@ abstract class SauceStoreBase with Store {
             ReverseImageSessionStepId.bookmarks,
             _bookmarkTerminalStepState,
             detail: _bookmarkTerminalDetail,
+          );
+        } else {
+          _updateSessionStep(
+            ReverseImageSessionStepId.bookmarks,
+            ReverseImageSessionStepState.skipped,
+            detail: 'User chose external image search',
           );
         }
       } else {
@@ -1075,11 +1079,25 @@ abstract class SauceStoreBase with Store {
   }
 
   void cancelCurrentSearch() {
-    final token = _externalCancelToken;
-    if (_disposed || token == null || token.isCancelled) return;
-    token.cancel('Cancelled by user');
-    _iqdbCancelToken?.cancel('Cancelled by user');
+    if (_disposed) return;
+
+    final bookmarkController = _bookmarkSearchController;
+    if (bookmarkController != null) {
+      bookmarkController.cancel();
+      _lastBookmarkSearchStatus = BookmarkVisualSearchStatus.cancelled;
+      _lastBookmarkSearchDetail = 'Bookmark scan cancelled';
+    }
+
+    final externalToken = _externalCancelToken;
+    if (externalToken != null && !externalToken.isCancelled) {
+      externalToken.cancel('Cancelled by user');
+    }
+    final iqdbToken = _iqdbCancelToken;
+    if (iqdbToken != null && !iqdbToken.isCancelled) {
+      iqdbToken.cancel('Cancelled by user');
+    }
     for (final stepId in const <ReverseImageSessionStepId>[
+      ReverseImageSessionStepId.bookmarks,
       ReverseImageSessionStepId.sauceNao,
       ReverseImageSessionStepId.iqdb,
       ReverseImageSessionStepId.crop,
@@ -1369,10 +1387,12 @@ abstract class SauceStoreBase with Store {
         filename: 'pixez_reverse_search.$extension',
       ),
     };
-    final response = await dio.post<dynamic>(
-      '/search.php',
-      data: FormData.fromMap(form),
-      cancelToken: cancelToken,
+    final response = await _sauceDioClient.run(
+      (dio) => dio.post<dynamic>(
+        '/search.php',
+        data: FormData.fromMap(form),
+        cancelToken: cancelToken,
+      ),
     );
     final responseHtml = switch (response.data) {
       String value => value,
@@ -1399,7 +1419,7 @@ abstract class SauceStoreBase with Store {
     _updateSessionStep(
       ReverseImageSessionStepId.iqdb,
       ReverseImageSessionStepState.running,
-      detail: 'Searching mirror indexes',
+      detail: 'Searching IQDB indexes',
     );
 
     // SauceNAO and IQDB are independent services. Running the IQDB request in
@@ -2154,18 +2174,7 @@ abstract class SauceStoreBase with Store {
   }
 
   String _dioMessage(DioException error) {
-    final status = error.response?.statusCode;
-    if (status == 429) return 'SauceNAO: too many requests (429)';
-    if (status == 403) {
-      return 'SauceNAO: browser verification required (403)';
-    }
-    if (status != null) return 'SauceNAO: request failed ($status)';
-    if (error.type == DioExceptionType.connectionTimeout ||
-        error.type == DioExceptionType.sendTimeout ||
-        error.type == DioExceptionType.receiveTimeout) {
-      return 'SauceNAO: timeout';
-    }
-    return 'SauceNAO: network error';
+    return describeExternalSearchFailure('SauceNAO', error);
   }
 
   String _lastPathSegment(String path) {

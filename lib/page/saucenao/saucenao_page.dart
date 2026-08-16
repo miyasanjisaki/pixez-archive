@@ -47,7 +47,6 @@ class _SauceNaoPageState extends State<SauceNaoPage> {
           context: context,
           path: widget.path,
           inlineResults: true,
-          skipBookmarkPrompt: true,
         );
       });
     }

@@ -205,9 +205,10 @@ class _ReverseImageSearchPanelState extends State<ReverseImageSearchPanel>
                       Text(
                         bytes == null
                             ? _text(
-                                '先检查本地 PID/下载指纹，再并行查询 SauceNAO 与 IQDB。不会自动扫描收藏，以免把快速识图拖到几分钟。',
-                                'Checks local identity first, then searches SauceNAO and '
-                                    'IQDB in parallel. Bookmarks are a separate optional scan.',
+                                '先检查本地 PID/下载指纹；若已登录，可选择扫描自己的公开/非公开收藏，或直接并行查询 SauceNAO 与 IQDB。',
+                                'Checks local identity first. When signed in, you can scan '
+                                    'your public and private bookmarks or search SauceNAO and '
+                                    'IQDB in parallel.',
                               )
                             : _phaseSummary(widget.store.phase.value),
                         style: Theme.of(context).textTheme.bodySmall,
@@ -247,7 +248,6 @@ class _ReverseImageSearchPanelState extends State<ReverseImageSearchPanel>
                   : () => widget.store.findImage(
                       context: context,
                       inlineResults: true,
-                      skipBookmarkPrompt: true,
                     ),
               icon: Icon(
                 bytes == null ? Icons.add_photo_alternate : Icons.refresh,

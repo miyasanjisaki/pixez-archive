@@ -40,16 +40,28 @@ class PixezNetworkSettings {
     return compatible();
   }
 
+  /// Network settings for third-party HTTPS services such as reverse-image
+  /// search providers.
+  ///
+  /// External hosts must never inherit Pixiv's static DNS overrides. ECH is
+  /// therefore opportunistic here: providers that do not publish ECH
+  /// configuration can still use the normal verified TLS path.
+  static r.ClientSettings? forExternalService(NetworkMode mode) {
+    if (mode == NetworkMode.standard) return null;
+    if (mode == NetworkMode.compat) return compatible();
+    return r.ClientSettings(
+      enableEch: true,
+      requireEch: false,
+      tlsSettings: _verifiedTlsSettings(),
+    );
+  }
+
   static r.ClientSettings compatible() {
     return r.ClientSettings(
       // DNS overrides must not weaken HTTPS. The request still targets the
       // original hostname, so certificate verification and SNI remain valid
       // even when the resolver supplies a custom IP address.
-      tlsSettings: r.TlsSettings(
-        verifyCertificates: true,
-        rootCertSource: r.RootCertSource.webpki,
-        sni: true,
-      ),
+      tlsSettings: _verifiedTlsSettings(),
       dnsSettings: r.DnsSettings.dynamic(
         resolver: (host) async {
           final ip = _compatibleIp(host);
@@ -59,6 +71,14 @@ class PixezNetworkSettings {
           ).then((value) => value.map((e) => e.address).toList());
         },
       ),
+    );
+  }
+
+  static r.TlsSettings _verifiedTlsSettings() {
+    return r.TlsSettings(
+      verifyCertificates: true,
+      rootCertSource: r.RootCertSource.webpki,
+      sni: true,
     );
   }
 
