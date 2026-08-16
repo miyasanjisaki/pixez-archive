@@ -8,13 +8,14 @@ plugins, and platform channels.
 
 - `PixivCurrentUserBookmarkVisualSource` snapshots
   `accountStore.now?.userId`, checks it again before and after every request, and
-  calls `apiClient.getBookmarksIllustsOffset(expectedUserId, restrict, null,
-  offset)`. Search callers cannot provide another user ID.
+  requests `/v1/user/bookmarks/illust` for that account and visibility. Search
+  callers cannot provide another user ID.
 - Pagination never follows `next_url` directly. The parser validates the
   `/v1/user/bookmarks/illust` path, user ID, and public/private restriction,
-  extracts only `offset`, then the source reissues the request with the selected
-  account ID. Every page request forces a cache refresh, has a 30-second overall
-  timeout, and is connected to the search cancellation token.
+  extracts only the typed `max_bookmark_id` cursor (or legacy `offset`), then the
+  source reissues the request with the selected account ID. Every page request
+  forces a cache refresh, has a 30-second overall timeout, and is connected to
+  the search cancellation token.
 - Public and private pages are polled round-robin: public page 1, private page 1,
   public page 2, private page 2, and so on. Both recent scopes are therefore
   checked before an old public-only collection consumes the global work limit.

@@ -233,6 +233,31 @@ jobs:
             if ($signatureReport -notmatch '350f39370cb67176c30c16e8d39653ea7b57929b187e55edaff9dd0cb55a9707') {
               throw "APK test signer fingerprint is unexpected: $($apkFile.Name)"
             }
+
+            $archive = [IO.Compression.ZipFile]::OpenRead($apkFile.FullName)
+            try {
+              $platformVerifierFound = $false
+              foreach ($entry in @($archive.Entries | Where-Object { $_.FullName -match '^classes\d*\.dex$' })) {
+                $entryStream = $entry.Open()
+                $buffer = [IO.MemoryStream]::new()
+                try {
+                  $entryStream.CopyTo($buffer)
+                  $dexText = [Text.Encoding]::ASCII.GetString($buffer.ToArray())
+                  if ($dexText.Contains('org/rustls/platformverifier')) {
+                    $platformVerifierFound = $true
+                    break
+                  }
+                } finally {
+                  $buffer.Dispose()
+                  $entryStream.Dispose()
+                }
+              }
+              if (-not $platformVerifierFound) {
+                throw "rustls platform verifier was stripped from $($apkFile.Name)"
+              }
+            } finally {
+              $archive.Dispose()
+            }
             $signatureReport
           }
 

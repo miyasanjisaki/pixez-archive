@@ -69,7 +69,7 @@ class PixivCurrentUserBookmarkVisualSource
   Future<BookmarkVisualPage> loadPage({
     required int expectedUserId,
     required BookmarkVisibility visibility,
-    required int? offset,
+    required BookmarkVisualPageCursor? cursor,
     required BookmarkVisualCancellationToken cancellationToken,
   }) async {
     _verifyCurrentAccount(expectedUserId);
@@ -82,14 +82,21 @@ class PixivCurrentUserBookmarkVisualSource
 
     cancellationToken.addListener(cancelRequest);
     try {
+      final queryParameters = <String, Object>{
+        'user_id': expectedUserId,
+        'restrict': visibility.name,
+      };
+      if (cursor != null) {
+        queryParameters[switch (cursor.kind) {
+              BookmarkVisualPageCursorKind.offset => 'offset',
+              BookmarkVisualPageCursorKind.maxBookmarkId => 'max_bookmark_id',
+            }] =
+            cursor.value;
+      }
       final response = await client.httpClient
           .get<Object?>(
             _pixivBookmarkPath,
-            queryParameters: <String, Object>{
-              'user_id': expectedUserId,
-              'restrict': visibility.name,
-              if (offset != null) 'offset': offset,
-            },
+            queryParameters: queryParameters,
             options: client.options
                 .copyWith(policy: CachePolicy.refresh)
                 .toOptions()
@@ -480,12 +487,12 @@ BookmarkVisualPage parsePixivBookmarkVisualPage(
     }
   }
 
-  final nextOffset = _validatedNextOffset(
+  final nextCursor = _validatedNextCursor(
     json['next_url'],
     expectedUserId: expectedUserId,
     visibility: visibility,
   );
-  return BookmarkVisualPage(works: works, nextOffset: nextOffset);
+  return BookmarkVisualPage(works: works, nextCursor: nextCursor);
 }
 
 Map<String, dynamic> _jsonMap(Object? value) {
@@ -517,7 +524,7 @@ String? _trustedMediumUrl(Map<dynamic, dynamic> imageUrls) {
   return null;
 }
 
-int? _validatedNextOffset(
+BookmarkVisualPageCursor? _validatedNextCursor(
   Object? value, {
   required int expectedUserId,
   required BookmarkVisibility visibility,
@@ -530,17 +537,60 @@ int? _validatedNextOffset(
   if (uri == null ||
       uri.scheme != 'https' ||
       uri.host.toLowerCase() != _pixivApiHost ||
-      uri.path != _pixivBookmarkPath) {
+      uri.path != _pixivBookmarkPath ||
+      uri.userInfo.isNotEmpty ||
+      (uri.hasPort && uri.port != 443) ||
+      uri.fragment.isNotEmpty) {
     throw const FormatException('Refused an unexpected Pixiv next_url');
   }
-  final nextUserId = int.tryParse(uri.queryParameters['user_id'] ?? '');
-  final nextVisibility = uri.queryParameters['restrict'];
-  final offset = int.tryParse(uri.queryParameters['offset'] ?? '');
-  if ((nextUserId != null && nextUserId != expectedUserId) ||
-      (nextVisibility != null && nextVisibility != visibility.name) ||
-      offset == null ||
-      offset < 0) {
+
+  const allowedParameters = <String>{
+    'user_id',
+    'restrict',
+    'offset',
+    'max_bookmark_id',
+  };
+  final parameters = uri.queryParametersAll;
+  if (parameters.keys.any((key) => !allowedParameters.contains(key))) {
     throw const FormatException('Pixiv next_url changed bookmark scope');
   }
-  return offset;
+
+  final userIds = parameters['user_id'];
+  final restrictions = parameters['restrict'];
+  if (userIds == null ||
+      userIds.length != 1 ||
+      userIds.single != expectedUserId.toString() ||
+      restrictions == null ||
+      restrictions.length != 1 ||
+      restrictions.single != visibility.name) {
+    throw const FormatException('Pixiv next_url changed bookmark scope');
+  }
+
+  final offsets = parameters['offset'];
+  final maxBookmarkIds = parameters['max_bookmark_id'];
+  if ((offsets == null) == (maxBookmarkIds == null) ||
+      (offsets != null && offsets.length != 1) ||
+      (maxBookmarkIds != null && maxBookmarkIds.length != 1)) {
+    throw const FormatException('Pixiv next_url returned an invalid cursor');
+  }
+
+  if (offsets != null) {
+    return BookmarkVisualPageCursor.offset(
+      _parseNonNegativeCursor(offsets.single),
+    );
+  }
+  return BookmarkVisualPageCursor.maxBookmarkId(
+    _parseNonNegativeCursor(maxBookmarkIds!.single),
+  );
+}
+
+int _parseNonNegativeCursor(String value) {
+  if (!RegExp(r'^\d+$').hasMatch(value)) {
+    throw const FormatException('Pixiv next_url returned an invalid cursor');
+  }
+  final cursor = int.tryParse(value);
+  if (cursor == null || cursor < 0) {
+    throw const FormatException('Pixiv next_url returned an invalid cursor');
+  }
+  return cursor;
 }

@@ -112,27 +112,246 @@ void main() {
     );
   });
 
-  test('requests the all-index fallback only without Pixiv candidates', () {
-    expect(
+  group('all-index fallback decision', () {
+    test('skips a second request for one decisive exact Pixiv match', () {
+      final decision = decideSauceNaoAllIndexFallback(
+        const SauceNaoPixivResults(
+          exactMatches: <SauceNaoPixivCandidate>[
+            SauceNaoPixivCandidate(
+              illustId: 12345678,
+              similarity: 92,
+              pixivUrl: 'https://www.pixiv.net/artworks/12345678',
+            ),
+          ],
+          possibleMatches: <SauceNaoPixivCandidate>[],
+        ),
+      );
+
+      expect(decision.shouldSearchAllIndexes, isFalse);
+      expect(
+        decision.reason,
+        SauceNaoAllIndexFallbackReason.decisivePixivMatch,
+      );
+      expect(decision.bestPixivSimilarity, 92);
+      expect(decision.runnerUpSimilarity, isNull);
+    });
+
+    test('searches all indexes when the Pixiv match is weak', () {
+      final decision = decideSauceNaoAllIndexFallback(
+        const SauceNaoPixivResults(
+          exactMatches: <SauceNaoPixivCandidate>[],
+          possibleMatches: <SauceNaoPixivCandidate>[
+            SauceNaoPixivCandidate(
+              illustId: 12345678,
+              similarity: 79,
+              pixivUrl: 'https://www.pixiv.net/artworks/12345678',
+            ),
+          ],
+        ),
+      );
+
+      expect(decision.shouldSearchAllIndexes, isTrue);
+      expect(
+        decision.reason,
+        SauceNaoAllIndexFallbackReason.noHighConfidencePixivMatch,
+      );
+      expect(decision.bestPixivSimilarity, 79);
+    });
+
+    test('searches all indexes when exact Pixiv matches are tied', () {
+      final decision = decideSauceNaoAllIndexFallback(
+        const SauceNaoPixivResults(
+          exactMatches: <SauceNaoPixivCandidate>[
+            SauceNaoPixivCandidate(
+              illustId: 12345678,
+              similarity: 91,
+              pixivUrl: 'https://www.pixiv.net/artworks/12345678',
+            ),
+            SauceNaoPixivCandidate(
+              illustId: 23456789,
+              similarity: 88,
+              pixivUrl: 'https://www.pixiv.net/artworks/23456789',
+            ),
+          ],
+          possibleMatches: <SauceNaoPixivCandidate>[],
+        ),
+      );
+
+      expect(decision.shouldSearchAllIndexes, isTrue);
+      expect(
+        decision.reason,
+        SauceNaoAllIndexFallbackReason.ambiguousPixivMatch,
+      );
+      expect(decision.runnerUpSimilarity, 88);
+    });
+
+    test('skips fallback when an exact Pixiv winner has enough lead', () {
+      final decision = decideSauceNaoAllIndexFallback(
+        const SauceNaoPixivResults(
+          exactMatches: <SauceNaoPixivCandidate>[
+            SauceNaoPixivCandidate(
+              illustId: 12345678,
+              similarity: 90,
+              pixivUrl: 'https://www.pixiv.net/artworks/12345678',
+            ),
+            SauceNaoPixivCandidate(
+              illustId: 23456789,
+              similarity: 85,
+              pixivUrl: 'https://www.pixiv.net/artworks/23456789',
+            ),
+          ],
+          possibleMatches: <SauceNaoPixivCandidate>[],
+        ),
+      );
+
+      expect(decision.shouldSearchAllIndexes, isFalse);
+      expect(
+        decision.reason,
+        SauceNaoAllIndexFallbackReason.decisivePixivMatch,
+      );
+      expect(decision.runnerUpSimilarity, 85);
+    });
+
+    test('searches all indexes for an empty Pixiv response', () {
+      final decision = decideSauceNaoAllIndexFallback(
+        const SauceNaoPixivResults(
+          exactMatches: <SauceNaoPixivCandidate>[],
+          possibleMatches: <SauceNaoPixivCandidate>[],
+        ),
+      );
+
+      expect(decision.shouldSearchAllIndexes, isTrue);
+      expect(decision.bestPixivSimilarity, isNull);
+      expect(
+        decision.reason,
+        SauceNaoAllIndexFallbackReason.noHighConfidencePixivMatch,
+      );
+    });
+
+    test('does not let an external-only result suppress all-index search', () {
+      final decision = decideSauceNaoAllIndexFallback(
+        const SauceNaoPixivResults(
+          exactMatches: <SauceNaoPixivCandidate>[],
+          possibleMatches: <SauceNaoPixivCandidate>[],
+          externalMatches: <SauceNaoExternalCandidate>[
+            SauceNaoExternalCandidate(
+              similarity: 95,
+              sourceUrl: 'https://example.com/source',
+            ),
+          ],
+        ),
+      );
+
+      expect(decision.shouldSearchAllIndexes, isTrue);
+      expect(decision.bestPixivSimilarity, isNull);
+      expect(decision.runnerUpSimilarity, 95);
+    });
+
+    test('uses a strong external result when measuring the Pixiv lead', () {
+      final decision = decideSauceNaoAllIndexFallback(
+        const SauceNaoPixivResults(
+          exactMatches: <SauceNaoPixivCandidate>[
+            SauceNaoPixivCandidate(
+              illustId: 12345678,
+              similarity: 90,
+              pixivUrl: 'https://www.pixiv.net/artworks/12345678',
+            ),
+          ],
+          possibleMatches: <SauceNaoPixivCandidate>[],
+          externalMatches: <SauceNaoExternalCandidate>[
+            SauceNaoExternalCandidate(
+              similarity: 87,
+              sourceUrl: 'https://example.com/source',
+            ),
+          ],
+        ),
+      );
+
+      expect(decision.shouldSearchAllIndexes, isTrue);
+      expect(
+        decision.reason,
+        SauceNaoAllIndexFallbackReason.ambiguousPixivMatch,
+      );
+    });
+  });
+
+  test('merges fallback results without losing or duplicating evidence', () {
+    final merged = mergeSauceNaoPixivResults(
       const SauceNaoPixivResults(
         exactMatches: <SauceNaoPixivCandidate>[],
-        possibleMatches: <SauceNaoPixivCandidate>[],
-      ).hasPixivCandidates,
-      isFalse,
-    );
-    expect(
-      const SauceNaoPixivResults(
-        exactMatches: <SauceNaoPixivCandidate>[],
-        possibleMatches: <SauceNaoPixivCandidate>[],
+        possibleMatches: <SauceNaoPixivCandidate>[
+          SauceNaoPixivCandidate(
+            illustId: 12345678,
+            similarity: 72,
+            pixivUrl: 'https://www.pixiv.net/artworks/12345678',
+            thumbnailUrl: 'https://saucenao.com/thumbs/pixiv.jpg',
+          ),
+        ],
         externalMatches: <SauceNaoExternalCandidate>[
           SauceNaoExternalCandidate(
             similarity: 70,
             sourceUrl: 'https://example.com/source',
+            title: 'Source title',
+            thumbnailUrl: 'https://saucenao.com/thumbs/source.jpg',
+          ),
+          SauceNaoExternalCandidate(
+            similarity: 65,
+            sourceUrl: 'https://example.com/title-only',
           ),
         ],
-      ).hasPixivCandidates,
-      isFalse,
+      ),
+      const SauceNaoPixivResults(
+        exactMatches: <SauceNaoPixivCandidate>[
+          SauceNaoPixivCandidate(
+            illustId: 12345678,
+            similarity: 86,
+            pixivUrl: 'https://www.pixiv.net/artworks/12345678',
+          ),
+        ],
+        possibleMatches: <SauceNaoPixivCandidate>[
+          SauceNaoPixivCandidate(
+            illustId: 23456789,
+            similarity: 67,
+            pixivUrl: 'https://www.pixiv.net/artworks/23456789',
+          ),
+        ],
+        externalMatches: <SauceNaoExternalCandidate>[
+          SauceNaoExternalCandidate(
+            similarity: 76,
+            sourceUrl: 'https://example.com/source',
+          ),
+          SauceNaoExternalCandidate(
+            similarity: 60,
+            sourceUrl: 'https://example.com/title-only',
+            title: 'Late title',
+          ),
+        ],
+      ),
     );
+
+    expect(merged.exactMatches, hasLength(1));
+    expect(merged.exactMatches.single.illustId, 12345678);
+    expect(merged.exactMatches.single.similarity, 86);
+    expect(
+      merged.exactMatches.single.thumbnailUrl,
+      'https://saucenao.com/thumbs/pixiv.jpg',
+    );
+    expect(merged.possibleMatches.map((candidate) => candidate.illustId), <int>[
+      23456789,
+    ]);
+    expect(merged.externalMatches, hasLength(2));
+    expect(merged.externalMatches.first.similarity, 76);
+    expect(merged.externalMatches.first.title, 'Source title');
+    expect(
+      merged.externalMatches.first.thumbnailUrl,
+      'https://saucenao.com/thumbs/source.jpg',
+    );
+    expect(
+      merged.externalMatches.last.sourceUrl,
+      'https://example.com/title-only',
+    );
+    expect(merged.externalMatches.last.similarity, 65);
+    expect(merged.externalMatches.last.title, 'Late title');
   });
 
   test('normalizes a protocol-relative generic result thumbnail', () {

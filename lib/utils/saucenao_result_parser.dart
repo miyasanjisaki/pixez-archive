@@ -57,11 +57,200 @@ class SauceNaoPixivResults {
       possibleMatches.isEmpty &&
       externalMatches.isEmpty;
 
-  /// A broad all-index retry is useful only when the Pixiv index produced no
-  /// Pixiv work at all. Medium/low-confidence candidates are still evidence
-  /// and must not trigger an immediate second SauceNAO request.
+  /// Whether any Pixiv evidence was parsed. Kept for callers that need to
+  /// distinguish Pixiv from generic source results; fallback decisions should
+  /// use
+  /// [decideSauceNaoAllIndexFallback] instead.
   bool get hasPixivCandidates =>
       exactMatches.isNotEmpty || possibleMatches.isNotEmpty;
+}
+
+enum SauceNaoAllIndexFallbackReason {
+  /// The Pixiv-only result has one high-confidence candidate which is clearly
+  /// ahead of every competing Pixiv or external candidate.
+  decisivePixivMatch,
+
+  /// No Pixiv candidate reached the high-confidence threshold.
+  noHighConfidencePixivMatch,
+
+  /// A high-confidence Pixiv candidate exists, but another result is too close
+  /// to treat it as the unambiguous winner.
+  ambiguousPixivMatch,
+}
+
+class SauceNaoAllIndexFallbackDecision {
+  final SauceNaoAllIndexFallbackReason reason;
+  final double? bestPixivSimilarity;
+  final double? runnerUpSimilarity;
+
+  const SauceNaoAllIndexFallbackDecision({
+    required this.reason,
+    required this.bestPixivSimilarity,
+    required this.runnerUpSimilarity,
+  });
+
+  bool get shouldSearchAllIndexes =>
+      reason != SauceNaoAllIndexFallbackReason.decisivePixivMatch;
+}
+
+/// Decides whether a Pixiv-only SauceNAO response needs the broader index.
+///
+/// A weak Pixiv result is useful evidence, but it must not prevent discovery
+/// of a stronger mirror or source result in other SauceNAO indexes. Conversely,
+/// a clearly leading high-confidence Pixiv result avoids spending a second
+/// request from the user's SauceNAO quota.
+SauceNaoAllIndexFallbackDecision decideSauceNaoAllIndexFallback(
+  SauceNaoPixivResults results, {
+  double minimumHighConfidence = 80,
+  double minimumLead = 5,
+}) {
+  if (!minimumHighConfidence.isFinite ||
+      minimumHighConfidence < 0 ||
+      minimumHighConfidence > 100) {
+    throw ArgumentError.value(minimumHighConfidence, 'minimumHighConfidence');
+  }
+  if (!minimumLead.isFinite || minimumLead < 0) {
+    throw ArgumentError.value(minimumLead, 'minimumLead');
+  }
+
+  // Be defensive about hand-constructed result objects: de-duplicate Pixiv
+  // works before determining the lead so the same work cannot tie itself.
+  final bestPixivById = <int, double>{};
+  for (final candidate in <SauceNaoPixivCandidate>[
+    ...results.exactMatches,
+    ...results.possibleMatches,
+  ]) {
+    if (!candidate.similarity.isFinite ||
+        candidate.similarity < 0 ||
+        candidate.similarity > 100) {
+      continue;
+    }
+    final previous = bestPixivById[candidate.illustId];
+    if (previous == null || candidate.similarity > previous) {
+      bestPixivById[candidate.illustId] = candidate.similarity;
+    }
+  }
+
+  final pixivSimilarities = bestPixivById.values.toList()
+    ..sort((a, b) => b.compareTo(a));
+  final bestPixiv = pixivSimilarities.isEmpty ? null : pixivSimilarities.first;
+  if (bestPixiv == null || bestPixiv < minimumHighConfidence) {
+    return SauceNaoAllIndexFallbackDecision(
+      reason: SauceNaoAllIndexFallbackReason.noHighConfidencePixivMatch,
+      bestPixivSimilarity: bestPixiv,
+      runnerUpSimilarity: _strongestCompetingSimilarity(
+        pixivSimilarities.skip(1),
+        results.externalMatches,
+      ),
+    );
+  }
+
+  final runnerUp = _strongestCompetingSimilarity(
+    pixivSimilarities.skip(1),
+    results.externalMatches,
+  );
+  if (runnerUp != null && bestPixiv - runnerUp < minimumLead) {
+    return SauceNaoAllIndexFallbackDecision(
+      reason: SauceNaoAllIndexFallbackReason.ambiguousPixivMatch,
+      bestPixivSimilarity: bestPixiv,
+      runnerUpSimilarity: runnerUp,
+    );
+  }
+  return SauceNaoAllIndexFallbackDecision(
+    reason: SauceNaoAllIndexFallbackReason.decisivePixivMatch,
+    bestPixivSimilarity: bestPixiv,
+    runnerUpSimilarity: runnerUp,
+  );
+}
+
+double? _strongestCompetingSimilarity(
+  Iterable<double> pixivSimilarities,
+  Iterable<SauceNaoExternalCandidate> externalMatches,
+) {
+  double? strongest;
+  for (final similarity in <double>[
+    ...pixivSimilarities,
+    ...externalMatches.map((candidate) => candidate.similarity),
+  ]) {
+    if (!similarity.isFinite || similarity < 0 || similarity > 100) continue;
+    if (strongest == null || similarity > strongest) strongest = similarity;
+  }
+  return strongest;
+}
+
+/// Merges Pixiv-only and all-index SauceNAO responses without losing the first
+/// response when the second request is needed. Duplicate works/sources keep
+/// their strongest similarity and the best available thumbnail.
+SauceNaoPixivResults mergeSauceNaoPixivResults(
+  SauceNaoPixivResults first,
+  SauceNaoPixivResults second, {
+  double exactSimilarity = 80,
+}) {
+  if (!exactSimilarity.isFinite ||
+      exactSimilarity < 0 ||
+      exactSimilarity > 100) {
+    throw ArgumentError.value(exactSimilarity, 'exactSimilarity');
+  }
+
+  final bestPixivById = <int, SauceNaoPixivCandidate>{};
+  for (final candidate in <SauceNaoPixivCandidate>[
+    ...first.exactMatches,
+    ...first.possibleMatches,
+    ...second.exactMatches,
+    ...second.possibleMatches,
+  ]) {
+    final previous = bestPixivById[candidate.illustId];
+    if (previous == null || candidate.similarity > previous.similarity) {
+      bestPixivById[candidate.illustId] = _withPreviousPixivThumbnail(
+        candidate,
+        previous,
+      );
+    } else if (previous.thumbnailUrl == null &&
+        candidate.thumbnailUrl != null) {
+      bestPixivById[candidate.illustId] = SauceNaoPixivCandidate(
+        illustId: previous.illustId,
+        similarity: previous.similarity,
+        pixivUrl: previous.pixivUrl,
+        thumbnailUrl: candidate.thumbnailUrl,
+      );
+    }
+  }
+
+  final bestExternalByUrl = <String, SauceNaoExternalCandidate>{};
+  for (final candidate in <SauceNaoExternalCandidate>[
+    ...first.externalMatches,
+    ...second.externalMatches,
+  ]) {
+    final previous = bestExternalByUrl[candidate.sourceUrl];
+    if (previous == null || candidate.similarity > previous.similarity) {
+      bestExternalByUrl[candidate.sourceUrl] = _withPreviousExternalThumbnail(
+        candidate,
+        previous,
+      );
+    } else if ((previous.title == null && candidate.title != null) ||
+        (previous.thumbnailUrl == null && candidate.thumbnailUrl != null)) {
+      bestExternalByUrl[candidate.sourceUrl] = SauceNaoExternalCandidate(
+        similarity: previous.similarity,
+        sourceUrl: previous.sourceUrl,
+        title: previous.title ?? candidate.title,
+        thumbnailUrl: previous.thumbnailUrl ?? candidate.thumbnailUrl,
+      );
+    }
+  }
+
+  final pixivCandidates = bestPixivById.values.toList()
+    ..sort((a, b) => b.similarity.compareTo(a.similarity));
+  final externalCandidates = bestExternalByUrl.values.toList()
+    ..sort((a, b) => b.similarity.compareTo(a.similarity));
+  return SauceNaoPixivResults(
+    exactMatches: pixivCandidates
+        .where((candidate) => candidate.similarity >= exactSimilarity)
+        .toList(growable: false),
+    possibleMatches: pixivCandidates
+        .where((candidate) => candidate.similarity < exactSimilarity)
+        .toList(growable: false),
+    externalMatches: externalCandidates.toList(growable: false),
+  );
 }
 
 /// Parses SauceNAO result cards into auto-openable and confirmable Pixiv
@@ -218,14 +407,12 @@ SauceNaoExternalCandidate _withPreviousExternalThumbnail(
   SauceNaoExternalCandidate candidate,
   SauceNaoExternalCandidate? previous,
 ) {
-  if (candidate.thumbnailUrl != null || previous?.thumbnailUrl == null) {
-    return candidate;
-  }
+  if (previous == null) return candidate;
   return SauceNaoExternalCandidate(
     similarity: candidate.similarity,
     sourceUrl: candidate.sourceUrl,
-    title: candidate.title,
-    thumbnailUrl: previous!.thumbnailUrl,
+    title: candidate.title ?? previous.title,
+    thumbnailUrl: candidate.thumbnailUrl ?? previous.thumbnailUrl,
   );
 }
 

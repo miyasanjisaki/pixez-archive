@@ -46,11 +46,42 @@ class BookmarkVisualWork {
   const BookmarkVisualWork({required this.illustId, required this.images});
 }
 
+enum BookmarkVisualPageCursorKind { offset, maxBookmarkId }
+
+/// A typed Pixiv bookmark-page cursor.
+///
+/// Pixiv currently returns [BookmarkVisualPageCursorKind.maxBookmarkId], while
+/// older responses and compatible servers may still return
+/// [BookmarkVisualPageCursorKind.offset]. Keeping the kind in the value avoids
+/// treating `offset=30` and `max_bookmark_id=30` as the same page.
+class BookmarkVisualPageCursor {
+  final BookmarkVisualPageCursorKind kind;
+  final int value;
+
+  const BookmarkVisualPageCursor.offset(this.value)
+    : kind = BookmarkVisualPageCursorKind.offset;
+
+  const BookmarkVisualPageCursor.maxBookmarkId(this.value)
+    : kind = BookmarkVisualPageCursorKind.maxBookmarkId;
+
+  @override
+  bool operator ==(Object other) =>
+      other is BookmarkVisualPageCursor &&
+      other.kind == kind &&
+      other.value == value;
+
+  @override
+  int get hashCode => Object.hash(kind, value);
+
+  @override
+  String toString() => '${kind.name}:$value';
+}
+
 class BookmarkVisualPage {
   final List<BookmarkVisualWork> works;
-  final int? nextOffset;
+  final BookmarkVisualPageCursor? nextCursor;
 
-  const BookmarkVisualPage({required this.works, this.nextOffset});
+  const BookmarkVisualPage({required this.works, this.nextCursor});
 }
 
 /// A source that can only expose the account currently selected in PixEz.
@@ -65,7 +96,7 @@ abstract interface class CurrentUserBookmarkVisualSource {
   Future<BookmarkVisualPage> loadPage({
     required int expectedUserId,
     required BookmarkVisibility visibility,
-    required int? offset,
+    required BookmarkVisualPageCursor? cursor,
     required BookmarkVisualCancellationToken cancellationToken,
   });
 }
@@ -380,16 +411,16 @@ class BookmarkVisualSearchService {
             hitLimit = true;
             continue;
           }
-          if (!cursor.seenOffsets.add(cursor.offset)) {
+          if (!cursor.seenCursors.add(cursor.next)) {
             throw const FormatException(
-              'Pixiv returned a repeated bookmark-page offset',
+              'Pixiv returned a repeated bookmark-page cursor',
             );
           }
 
           final page = await source.loadPage(
             expectedUserId: expectedUserId,
             visibility: visibility,
-            offset: cursor.offset,
+            cursor: cursor.next,
             cancellationToken: token,
           );
           if (source.currentUserId != expectedUserId) {
@@ -400,8 +431,8 @@ class BookmarkVisualSearchService {
             );
           }
           cursor.pagesLoaded++;
-          cursor.offset = page.nextOffset;
-          cursor.done = page.nextOffset == null;
+          cursor.next = page.nextCursor;
+          cursor.done = page.nextCursor == null;
           progress = progress.copyWith(
             visibility: visibility,
             pagesLoaded: progress.pagesLoaded + 1,
@@ -748,9 +779,10 @@ class BookmarkVisualMatchConfirmer {
 
 class _BookmarkPageCursor {
   int pagesLoaded = 0;
-  int? offset;
+  BookmarkVisualPageCursor? next;
   bool done = false;
-  final Set<int?> seenOffsets = <int?>{};
+  final Set<BookmarkVisualPageCursor?> seenCursors =
+      <BookmarkVisualPageCursor?>{};
 }
 
 Future<void> _forEachConcurrent<T>(

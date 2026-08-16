@@ -46,13 +46,11 @@ class PixezNetworkSettings {
   /// External hosts must never inherit Pixiv's static DNS overrides. ECH is
   /// therefore opportunistic here: providers that do not publish ECH
   /// configuration can still use the normal verified TLS path.
-  static r.ClientSettings? forExternalService(NetworkMode mode) {
-    if (mode == NetworkMode.standard) return null;
-    if (mode == NetworkMode.compat) return compatible();
+  static r.ClientSettings forExternalService(NetworkMode mode) {
     return r.ClientSettings(
-      enableEch: true,
+      enableEch: mode == NetworkMode.ech,
       requireEch: false,
-      tlsSettings: _verifiedTlsSettings(),
+      tlsSettings: _verifiedExternalTlsSettings(),
     );
   }
 
@@ -78,6 +76,17 @@ class PixezNetworkSettings {
     return r.TlsSettings(
       verifyCertificates: true,
       rootCertSource: r.RootCertSource.webpki,
+      sni: true,
+    );
+  }
+
+  /// External services follow Android's trusted system roots. This keeps
+  /// their certificate-chain compatibility aligned with the platform browser
+  /// without weakening hostname or certificate verification.
+  static r.TlsSettings _verifiedExternalTlsSettings() {
+    return r.TlsSettings(
+      verifyCertificates: true,
+      rootCertSource: r.RootCertSource.platform,
       sni: true,
     );
   }

@@ -48,9 +48,7 @@ Future<Dio> createExternalSearchDio({
 /// Builds the native transport policy independently so its security and
 /// deadline invariants can be verified without opening a network connection.
 r.ClientSettings buildExternalSearchClientSettings(NetworkMode networkMode) {
-  final networkSettings =
-      PixezNetworkSettings.forExternalService(networkMode) ??
-      const r.ClientSettings();
+  final networkSettings = PixezNetworkSettings.forExternalService(networkMode);
   return networkSettings.copyWith(
     timeoutSettings: const r.TimeoutSettings(
       timeout: Duration(seconds: 45),

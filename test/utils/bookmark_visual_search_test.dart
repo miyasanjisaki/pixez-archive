@@ -13,12 +13,12 @@ void main() {
           pages: <String, BookmarkVisualPage>{
             'public:first': _page(<BookmarkVisualWork>[
               _work(11, <String>['public-decoy']),
-            ], nextOffset: 30),
-            'public:30': _page(const <BookmarkVisualWork>[]),
+            ], nextMaxBookmarkId: 901),
+            'public:max:901': _page(const <BookmarkVisualWork>[]),
             'private:first': _page(<BookmarkVisualWork>[
               _work(22, <String>['private-decoy']),
-            ], nextOffset: 30),
-            'private:30': _page(<BookmarkVisualWork>[
+            ], nextMaxBookmarkId: 801),
+            'private:max:801': _page(<BookmarkVisualWork>[
               _work(140739814, <String>['target-p0', 'target-p1']),
             ]),
           },
@@ -60,8 +60,8 @@ void main() {
         expect(source.calls, <String>[
           'public:first',
           'private:first',
-          'public:30',
-          'private:30',
+          'public:max:901',
+          'private:max:801',
         ]);
         expect(fetcher.maximumActive, lessThanOrEqualTo(2));
         expect(result.progress.imagesCompared, 4);
@@ -321,6 +321,81 @@ void main() {
       },
     );
 
+    test(
+      'cursor repetition tracks both the cursor kind and numeric value',
+      () async {
+        final source = _FakeSource(
+          pages: <String, BookmarkVisualPage>{
+            'public:first': _page(
+              const <BookmarkVisualWork>[],
+              nextMaxBookmarkId: 30,
+            ),
+            'private:first': _page(const <BookmarkVisualWork>[]),
+            'public:max:30': _page(
+              const <BookmarkVisualWork>[],
+              nextOffset: 30,
+            ),
+            'public:30': _page(const <BookmarkVisualWork>[]),
+          },
+        );
+        final service = BookmarkVisualSearchService(
+          source: source,
+          imageFetcher: _FakeFetcher(const <String, int>{}),
+          fingerprintComputer: _FakeFingerprintComputer(<int, _Fingerprint>{
+            9: _fingerprint('9', '0000000000000000'),
+          }),
+        );
+
+        final result = await service.search(
+          queryBytes: Uint8List.fromList(<int>[9]),
+        );
+
+        expect(result.status, BookmarkVisualSearchStatus.notFound);
+        expect(result.scanComplete, isTrue);
+        expect(source.calls, <String>[
+          'public:first',
+          'private:first',
+          'public:max:30',
+          'public:30',
+        ]);
+      },
+    );
+
+    test('fails safely when Pixiv repeats the same typed cursor', () async {
+      final source = _FakeSource(
+        pages: <String, BookmarkVisualPage>{
+          'public:first': _page(
+            const <BookmarkVisualWork>[],
+            nextMaxBookmarkId: 30,
+          ),
+          'private:first': _page(const <BookmarkVisualWork>[]),
+          'public:max:30': _page(
+            const <BookmarkVisualWork>[],
+            nextMaxBookmarkId: 30,
+          ),
+        },
+      );
+      final service = BookmarkVisualSearchService(
+        source: source,
+        imageFetcher: _FakeFetcher(const <String, int>{}),
+        fingerprintComputer: _FakeFingerprintComputer(<int, _Fingerprint>{
+          9: _fingerprint('9', '0000000000000000'),
+        }),
+      );
+
+      final result = await service.search(
+        queryBytes: Uint8List.fromList(<int>[9]),
+      );
+
+      expect(result.status, BookmarkVisualSearchStatus.failed);
+      expect(result.error, isA<FormatException>());
+      expect(source.calls, <String>[
+        'public:first',
+        'private:first',
+        'public:max:30',
+      ]);
+    });
+
     test('fails before paging when the query cannot produce a dHash', () async {
       final source = _FakeSource(
         pages: <String, BookmarkVisualPage>{
@@ -566,8 +641,21 @@ void main() {
   });
 }
 
-BookmarkVisualPage _page(List<BookmarkVisualWork> works, {int? nextOffset}) =>
-    BookmarkVisualPage(works: works, nextOffset: nextOffset);
+BookmarkVisualPage _page(
+  List<BookmarkVisualWork> works, {
+  int? nextOffset,
+  int? nextMaxBookmarkId,
+}) {
+  assert(nextOffset == null || nextMaxBookmarkId == null);
+  return BookmarkVisualPage(
+    works: works,
+    nextCursor: nextOffset != null
+        ? BookmarkVisualPageCursor.offset(nextOffset)
+        : nextMaxBookmarkId != null
+        ? BookmarkVisualPageCursor.maxBookmarkId(nextMaxBookmarkId)
+        : null,
+  );
+}
 
 BookmarkVisualWork _work(int illustId, List<String> urls) {
   return BookmarkVisualWork(
@@ -623,13 +711,13 @@ class _FakeSource implements CurrentUserBookmarkVisualSource {
   Future<BookmarkVisualPage> loadPage({
     required int expectedUserId,
     required BookmarkVisibility visibility,
-    required int? offset,
+    required BookmarkVisualPageCursor? cursor,
     required BookmarkVisualCancellationToken cancellationToken,
   }) async {
     if (expectedUserId != _currentUserId) {
       throw const BookmarkVisualAuthorizationException('account changed');
     }
-    final key = '${visibility.name}:${offset ?? 'first'}';
+    final key = '${visibility.name}:${_cursorLabel(cursor)}';
     calls.add(key);
     if (changeAccountAfterLoads == calls.length) _currentUserId = 43;
     return pages[key] ?? _page(const <BookmarkVisualWork>[]);
@@ -672,7 +760,7 @@ class _BlockingPageSource implements CurrentUserBookmarkVisualSource {
   Future<BookmarkVisualPage> loadPage({
     required int expectedUserId,
     required BookmarkVisibility visibility,
-    required int? offset,
+    required BookmarkVisualPageCursor? cursor,
     required BookmarkVisualCancellationToken cancellationToken,
   }) {
     final completer = Completer<BookmarkVisualPage>();
@@ -688,6 +776,14 @@ class _BlockingPageSource implements CurrentUserBookmarkVisualSource {
       () => cancellationToken.removeListener(cancel),
     );
   }
+}
+
+String _cursorLabel(BookmarkVisualPageCursor? cursor) {
+  if (cursor == null) return 'first';
+  return switch (cursor.kind) {
+    BookmarkVisualPageCursorKind.offset => cursor.value.toString(),
+    BookmarkVisualPageCursorKind.maxBookmarkId => 'max:${cursor.value}',
+  };
 }
 
 class _FakeSink implements BookmarkVisualIdentitySink {

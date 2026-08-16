@@ -1,7 +1,10 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:pixez/network/api_client.dart';
 import 'package:pixez/utils/bookmark_visual_search.dart';
 import 'package:pixez/utils/pixiv_bookmark_visual_search.dart';
 
@@ -55,6 +58,59 @@ void main() {
     });
   });
 
+  group('PixivCurrentUserBookmarkVisualSource', () {
+    test(
+      'sends first-page, max-bookmark, and legacy offset requests',
+      () async {
+        final adapter = _RecordingAdapter();
+        final api = ApiClient();
+        api.httpClient = Dio(BaseOptions(baseUrl: 'https://app-api.pixiv.net'))
+          ..httpClientAdapter = adapter;
+        final source = PixivCurrentUserBookmarkVisualSource(
+          client: api,
+          currentUserIdProvider: () => 42,
+        );
+        final token = BookmarkVisualCancellationToken();
+
+        await source.loadPage(
+          expectedUserId: 42,
+          visibility: BookmarkVisibility.public,
+          cursor: null,
+          cancellationToken: token,
+        );
+        await source.loadPage(
+          expectedUserId: 42,
+          visibility: BookmarkVisibility.private,
+          cursor: const BookmarkVisualPageCursor.maxBookmarkId(9001),
+          cancellationToken: token,
+        );
+        await source.loadPage(
+          expectedUserId: 42,
+          visibility: BookmarkVisibility.public,
+          cursor: const BookmarkVisualPageCursor.offset(30),
+          cancellationToken: token,
+        );
+
+        expect(adapter.requests, hasLength(3));
+        expect(adapter.requests[0].path, '/v1/user/bookmarks/illust');
+        expect(adapter.requests[0].queryParameters, <String, Object>{
+          'user_id': 42,
+          'restrict': 'public',
+        });
+        expect(adapter.requests[1].queryParameters, <String, Object>{
+          'user_id': 42,
+          'restrict': 'private',
+          'max_bookmark_id': 9001,
+        });
+        expect(adapter.requests[2].queryParameters, <String, Object>{
+          'user_id': 42,
+          'restrict': 'public',
+          'offset': 30,
+        });
+      },
+    );
+  });
+
   group('parsePixivBookmarkVisualPage', () {
     test('selects API medium URLs for single and every meta page', () {
       final page = parsePixivBookmarkVisualPage(
@@ -105,7 +161,7 @@ void main() {
         visibility: BookmarkVisibility.private,
       );
 
-      expect(page.nextOffset, 30);
+      expect(page.nextCursor, const BookmarkVisualPageCursor.offset(30));
       expect(page.works.map((work) => work.illustId), <int>[100, 140739814]);
       expect(page.works[0].images.single.url, contains('single-medium'));
       expect(page.works[1].images.map((image) => image.pageIndex), <int>[0, 1]);
@@ -115,31 +171,71 @@ void main() {
       ]);
     });
 
-    test('rejects a next page that changes account or visibility', () {
-      expect(
-        () => parsePixivBookmarkVisualPage(
-          <String, dynamic>{
-            'illusts': <dynamic>[],
-            'next_url':
-                'https://app-api.pixiv.net/v1/user/bookmarks/illust?user_id=99&restrict=public&offset=30',
-          },
-          expectedUserId: 42,
-          visibility: BookmarkVisibility.public,
-        ),
-        throwsFormatException,
+    test('accepts the current max_bookmark_id cursor', () {
+      final page = parsePixivBookmarkVisualPage(
+        <String, dynamic>{
+          'illusts': <dynamic>[],
+          'next_url':
+              'https://app-api.pixiv.net/v1/user/bookmarks/illust?user_id=42&restrict=public&max_bookmark_id=31827376703',
+        },
+        expectedUserId: 42,
+        visibility: BookmarkVisibility.public,
       );
+
       expect(
-        () => parsePixivBookmarkVisualPage(
-          <String, dynamic>{
-            'illusts': <dynamic>[],
-            'next_url':
-                'https://app-api.pixiv.net/v1/user/bookmarks/illust?user_id=42&restrict=private&offset=30',
-          },
-          expectedUserId: 42,
-          visibility: BookmarkVisibility.public,
-        ),
-        throwsFormatException,
+        page.nextCursor,
+        const BookmarkVisualPageCursor.maxBookmarkId(31827376703),
       );
     });
+
+    test('rejects changed scope, endpoint, or duplicated cursor fields', () {
+      const invalidNextUrls = <String>[
+        'https://app-api.pixiv.net/v1/user/bookmarks/illust?user_id=99&restrict=public&offset=30',
+        'https://app-api.pixiv.net/v1/user/bookmarks/illust?user_id=42&restrict=private&offset=30',
+        'https://evil.example/v1/user/bookmarks/illust?user_id=42&restrict=public&offset=30',
+        'https://app-api.pixiv.net/v1/user/bookmarks/novel?user_id=42&restrict=public&offset=30',
+        'https://app-api.pixiv.net/v1/user/bookmarks/illust?restrict=public&offset=30',
+        'https://app-api.pixiv.net/v1/user/bookmarks/illust?user_id=42&offset=30',
+        'https://app-api.pixiv.net/v1/user/bookmarks/illust?user_id=42&restrict=public&offset=30&max_bookmark_id=29',
+        'https://app-api.pixiv.net/v1/user/bookmarks/illust?user_id=42&restrict=public&offset=30&offset=60',
+        'https://app-api.pixiv.net/v1/user/bookmarks/illust?user_id=42&restrict=public&max_bookmark_id=-1',
+        'https://app-api.pixiv.net/v1/user/bookmarks/illust?user_id=42&restrict=public&offset=30&tag=private',
+      ];
+
+      for (final nextUrl in invalidNextUrls) {
+        expect(
+          () => parsePixivBookmarkVisualPage(
+            <String, dynamic>{'illusts': <dynamic>[], 'next_url': nextUrl},
+            expectedUserId: 42,
+            visibility: BookmarkVisibility.public,
+          ),
+          throwsFormatException,
+          reason: nextUrl,
+        );
+      }
+    });
   });
+}
+
+class _RecordingAdapter implements HttpClientAdapter {
+  final List<RequestOptions> requests = <RequestOptions>[];
+
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<Uint8List>? requestStream,
+    Future<void>? cancelFuture,
+  ) async {
+    requests.add(options);
+    return ResponseBody.fromString(
+      jsonEncode(<String, Object?>{'illusts': <Object?>[], 'next_url': null}),
+      200,
+      headers: <String, List<String>>{
+        Headers.contentTypeHeader: <String>[Headers.jsonContentType],
+      },
+    );
+  }
+
+  @override
+  void close({bool force = false}) {}
 }

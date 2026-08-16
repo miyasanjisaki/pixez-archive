@@ -1473,6 +1473,8 @@ abstract class SauceStoreBase with Store {
     final hits = <ReverseImageProviderHit>[];
     final messages = <String>[];
     var successfulProviders = 0;
+    var searchedAllIndexes = false;
+    var allIndexesCompleted = false;
 
     SauceNaoPixivResults? sauceResults;
     try {
@@ -1498,17 +1500,30 @@ abstract class SauceStoreBase with Store {
       LPrinter.d('$message: $error\n$stackTrace');
     }
 
+    final fallbackDecision = sauceResults == null
+        ? null
+        : decideSauceNaoAllIndexFallback(sauceResults);
     if (!cancelToken.isCancelled &&
         sauceResults != null &&
-        !sauceResults.hasPixivCandidates) {
+        fallbackDecision != null &&
+        fallbackDecision.shouldSearchAllIndexes) {
+      searchedAllIndexes = true;
+      final fallbackDetail = switch (fallbackDecision.reason) {
+        SauceNaoAllIndexFallbackReason.noHighConfidencePixivMatch =>
+          'Pixiv result was below high confidence; searching all indexes',
+        SauceNaoAllIndexFallbackReason.ambiguousPixivMatch =>
+          'Pixiv result was not clearly ahead; searching all indexes',
+        SauceNaoAllIndexFallbackReason.decisivePixivMatch =>
+          'Searching all indexes',
+      };
       _updateSessionStep(
         ReverseImageSessionStepId.sauceNao,
         ReverseImageSessionStepState.running,
-        detail: 'Pixiv index had no exact match; searching all indexes',
+        detail: fallbackDetail,
       );
       LPrinter.d(
-        'SauceNAO db5 returned no high-confidence Pixiv candidate; '
-        'trying db999',
+        'SauceNAO db5 did not return a decisive Pixiv match '
+        '(${fallbackDecision.reason.name}); trying db999',
       );
       try {
         final allDatabaseResults = await _searchSauceNao(
@@ -1517,7 +1532,11 @@ abstract class SauceStoreBase with Store {
           pixivOnly: false,
           cancelToken: cancelToken,
         );
-        sauceResults = _mergeSauceResults(sauceResults, allDatabaseResults);
+        sauceResults = mergeSauceNaoPixivResults(
+          sauceResults,
+          allDatabaseResults,
+        );
+        allIndexesCompleted = true;
       } on SauceNaoResponseException catch (error) {
         // Keep the valid Pixiv-index candidates. A failed broad fallback is a
         // partial provider failure, not a reason to discard earlier evidence.
@@ -1571,6 +1590,16 @@ abstract class SauceStoreBase with Store {
     }
 
     final sauceCandidateCount = hits.length;
+    final sauceDetail = cancelToken.isCancelled
+        ? 'Cancelled by user'
+        : successfulProviders == 0
+        ? (messages.isEmpty ? 'SauceNAO unavailable' : messages.join(' · '))
+        : searchedAllIndexes
+        ? allIndexesCompleted
+              ? '$sauceCandidateCount candidate(s) · Pixiv and all indexes searched'
+              : '$sauceCandidateCount candidate(s) · Pixiv results kept; '
+                    'all-index fallback unavailable'
+        : '$sauceCandidateCount candidate(s) · decisive Pixiv-index match';
     _updateSessionStep(
       ReverseImageSessionStepId.sauceNao,
       cancelToken.isCancelled
@@ -1580,11 +1609,7 @@ abstract class SauceStoreBase with Store {
                 ? ReverseImageSessionStepState.succeeded
                 : ReverseImageSessionStepState.noMatch)
           : ReverseImageSessionStepState.failed,
-      detail: cancelToken.isCancelled
-          ? 'Cancelled by user'
-          : successfulProviders > 0
-          ? '$sauceCandidateCount candidate(s)'
-          : (messages.isEmpty ? 'SauceNAO unavailable' : messages.join(' · ')),
+      detail: sauceDetail,
     );
 
     return _ExternalSearchBatch(
@@ -1647,26 +1672,6 @@ abstract class SauceStoreBase with Store {
       hits: List.unmodifiable(hits),
       successfulProviders: successfulProviders,
       serviceMessages: messages,
-    );
-  }
-
-  SauceNaoPixivResults _mergeSauceResults(
-    SauceNaoPixivResults first,
-    SauceNaoPixivResults second,
-  ) {
-    return SauceNaoPixivResults(
-      exactMatches: <SauceNaoPixivCandidate>[
-        ...first.exactMatches,
-        ...second.exactMatches,
-      ],
-      possibleMatches: <SauceNaoPixivCandidate>[
-        ...first.possibleMatches,
-        ...second.possibleMatches,
-      ],
-      externalMatches: <SauceNaoExternalCandidate>[
-        ...first.externalMatches,
-        ...second.externalMatches,
-      ],
     );
   }
 
