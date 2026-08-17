@@ -54,11 +54,20 @@ jobs:
       - name: 构建项目
         shell: pwsh
         run: |-
+          $ErrorActionPreference = 'Stop'
+          $buildNumber = '${{ steps.gitversion.outputs.buildMetaData }}'
+          if ([string]::IsNullOrWhiteSpace($buildNumber)) {
+            $buildNumber = '0'
+          }
+          if ($buildNumber -notmatch '^\d+$') {
+            throw "GitVersion build metadata must be numeric, got: $buildNumber"
+          }
+
           flutter build windows `
             --release `
             --no-pub `
             --build-name=${{ steps.gitversion.outputs.majorMinorPatch }} `
-            --build-number=${{ steps.gitversion.outputs.buildMetaData }}
+            --build-number=$buildNumber
 
       - name: 上传产物
         id: binary-artifact
