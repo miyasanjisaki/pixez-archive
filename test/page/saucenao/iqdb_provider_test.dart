@@ -97,7 +97,7 @@ ExternalSearchDioClient _fallbackClient({
           required ExternalTlsTrustChannel trustChannel,
         }) async {
           channels?.add(trustChannel);
-          return Dio(BaseOptions(baseUrl: baseUrl))
+          return Dio(BaseOptions(baseUrl: baseUrl, followRedirects: false))
             ..httpClientAdapter = _ScriptedHttpClientAdapter(handler);
         },
   );
@@ -192,8 +192,9 @@ void main() {
 
   test('reports the provider-owned total deadline as timeout', () async {
     final adapter = _PendingHttpClientAdapter();
-    final dio = Dio(BaseOptions(baseUrl: 'https://safe.iqdb.org'))
-      ..httpClientAdapter = adapter;
+    final dio = Dio(
+      BaseOptions(baseUrl: 'https://safe.iqdb.org', followRedirects: false),
+    )..httpClientAdapter = adapter;
     final provider = IqdbSearchProvider(
       dio: dio,
       totalTimeout: const Duration(milliseconds: 40),
@@ -239,8 +240,9 @@ void main() {
 
   test('reports earlier caller cancellation as cancellation', () async {
     final adapter = _PendingHttpClientAdapter();
-    final dio = Dio(BaseOptions(baseUrl: 'https://safe.iqdb.org'))
-      ..httpClientAdapter = adapter;
+    final dio = Dio(
+      BaseOptions(baseUrl: 'https://safe.iqdb.org', followRedirects: false),
+    )..httpClientAdapter = adapter;
     final provider = IqdbSearchProvider(
       dio: dio,
       totalTimeout: const Duration(seconds: 2),

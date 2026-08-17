@@ -131,10 +131,13 @@ void main() {
       );
 
       expect(second, isNot(same(first)));
-      expect(first.fields, const <MapEntry<String, String>>[
-        MapEntry<String, String>('dbs[]', '5'),
-      ]);
-      expect(second.fields, first.fields);
+      expect(Map<String, String>.fromEntries(first.fields), const {
+        'dbs[]': '5',
+      });
+      expect(
+        Map<String, String>.fromEntries(second.fields),
+        Map<String, String>.fromEntries(first.fields),
+      );
 
       final firstFile = first.files.single;
       final secondFile = second.files.single;
@@ -171,7 +174,7 @@ void main() {
               failCertificate: trustChannel == ExternalTlsTrustChannel.webpki,
             );
             adapters[trustChannel] = adapter;
-            return Dio(BaseOptions(baseUrl: baseUrl))
+            return Dio(BaseOptions(baseUrl: baseUrl, followRedirects: false))
               ..httpClientAdapter = adapter;
           },
     );
@@ -217,9 +220,7 @@ void main() {
       pixivOnly: false,
     );
 
-    expect(form.fields, const <MapEntry<String, String>>[
-      MapEntry<String, String>('db', '999'),
-    ]);
+    expect(Map<String, String>.fromEntries(form.fields), const {'db': '999'});
     expect(form.files.single.value.filename, 'pixez_reverse_search.jpg');
   });
 
@@ -245,7 +246,7 @@ void main() {
               channels.add(trustChannel);
               final adapter = _StatusAdapter(statusCode);
               adapters[trustChannel] = adapter;
-              return Dio(BaseOptions(baseUrl: baseUrl))
+              return Dio(BaseOptions(baseUrl: baseUrl, followRedirects: false))
                 ..httpClientAdapter = adapter;
             },
       );
@@ -276,8 +277,9 @@ void main() {
 
   test('one deadline cancels only the active SauceNAO transport', () async {
     final adapter = _PendingAdapter();
-    final dio = Dio(BaseOptions(baseUrl: 'https://saucenao.com'))
-      ..httpClientAdapter = adapter;
+    final dio = Dio(
+      BaseOptions(baseUrl: 'https://saucenao.com', followRedirects: false),
+    )..httpClientAdapter = adapter;
     final client = ExternalSearchDioClient(
       baseUrl: 'https://saucenao.com',
       networkModeProvider: () => NetworkMode.standard,
@@ -321,8 +323,9 @@ void main() {
     'caller cancellation still aborts the active SauceNAO transport',
     () async {
       final adapter = _PendingAdapter();
-      final dio = Dio(BaseOptions(baseUrl: 'https://saucenao.com'))
-        ..httpClientAdapter = adapter;
+      final dio = Dio(
+        BaseOptions(baseUrl: 'https://saucenao.com', followRedirects: false),
+      )..httpClientAdapter = adapter;
       final client = ExternalSearchDioClient(
         baseUrl: 'https://saucenao.com',
         networkModeProvider: () => NetworkMode.standard,
@@ -366,8 +369,9 @@ void main() {
       200,
       body: '<form>CAPTCHA verification required</form>',
     );
-    final dio = Dio(BaseOptions(baseUrl: 'https://saucenao.com'))
-      ..httpClientAdapter = adapter;
+    final dio = Dio(
+      BaseOptions(baseUrl: 'https://saucenao.com', followRedirects: false),
+    )..httpClientAdapter = adapter;
     final client = ExternalSearchDioClient(
       baseUrl: 'https://saucenao.com',
       networkModeProvider: () => NetworkMode.standard,

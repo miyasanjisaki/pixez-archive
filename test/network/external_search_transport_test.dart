@@ -212,8 +212,9 @@ void main() {
               required ExternalTlsTrustChannel trustChannel,
             }) async {
               createdChannels.add(trustChannel);
-              final client = Dio(BaseOptions(baseUrl: baseUrl))
-                ..httpClientAdapter = _TrackingAdapter();
+              final client = Dio(
+                BaseOptions(baseUrl: baseUrl, followRedirects: false),
+              )..httpClientAdapter = _TrackingAdapter();
               clients[trustChannel] = client;
               return client;
             },
@@ -298,7 +299,9 @@ void main() {
                 required ExternalTlsTrustChannel trustChannel,
               }) async {
                 createdChannels.add(trustChannel);
-                return Dio(BaseOptions(baseUrl: baseUrl));
+                return Dio(
+                  BaseOptions(baseUrl: baseUrl, followRedirects: false),
+                );
               },
         );
         try {
@@ -342,7 +345,8 @@ void main() {
               required String baseUrl,
               required NetworkMode networkMode,
               required ExternalTlsTrustChannel trustChannel,
-            }) async => Dio(BaseOptions(baseUrl: baseUrl)),
+            }) async =>
+                Dio(BaseOptions(baseUrl: baseUrl, followRedirects: false)),
       );
       try {
         await expectLater(
@@ -384,8 +388,9 @@ void main() {
 
   test('every provider request is confined to its configured origin', () async {
     final adapter = _SuccessAdapter();
-    final injected = Dio(BaseOptions(baseUrl: 'https://saucenao.com'))
-      ..httpClientAdapter = adapter;
+    final injected = Dio(
+      BaseOptions(baseUrl: 'https://saucenao.com', followRedirects: false),
+    )..httpClientAdapter = adapter;
     final owner = ExternalSearchDioClient(
       baseUrl: 'https://saucenao.com',
       networkModeProvider: () => NetworkMode.standard,
@@ -440,7 +445,7 @@ void main() {
             requestedModes.add(networkMode);
             final adapter = _TrackingAdapter();
             adapters.add(adapter);
-            return Dio(BaseOptions(baseUrl: baseUrl))
+            return Dio(BaseOptions(baseUrl: baseUrl, followRedirects: false))
               ..httpClientAdapter = adapter;
           },
     );
@@ -475,7 +480,7 @@ void main() {
             required ExternalTlsTrustChannel trustChannel,
           }) async {
             factoryCalls++;
-            return Dio(BaseOptions(baseUrl: baseUrl));
+            return Dio(BaseOptions(baseUrl: baseUrl, followRedirects: false));
           },
     );
     addTearDown(owner.close);
@@ -502,7 +507,7 @@ void main() {
           }) async {
             final adapter = _TrackingAdapter();
             adapters.add(adapter);
-            return Dio(BaseOptions(baseUrl: baseUrl))
+            return Dio(BaseOptions(baseUrl: baseUrl, followRedirects: false))
               ..httpClientAdapter = adapter;
           },
     );
@@ -545,7 +550,7 @@ void main() {
             }) async {
               final adapter = _TrackingAdapter();
               adapters.add(adapter);
-              return Dio(BaseOptions(baseUrl: baseUrl))
+              return Dio(BaseOptions(baseUrl: baseUrl, followRedirects: false))
                 ..httpClientAdapter = adapter;
             },
       );
@@ -601,7 +606,7 @@ void main() {
     final pending = owner.run<void>((_) async {});
     owner.close();
     creation.complete(
-      Dio(BaseOptions(baseUrl: 'https://example.test'))
+      Dio(BaseOptions(baseUrl: 'https://example.test', followRedirects: false))
         ..httpClientAdapter = adapter,
     );
 
