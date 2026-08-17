@@ -25,7 +25,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:fluent_ui/fluent_ui.dart' as fluent;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:image/image.dart';
+import 'package:image/image.dart' as img;
 import 'package:mobx/mobx.dart';
 import 'package:pixez/custom_tab_plugin.dart';
 import 'package:pixez/er/lprinter.dart';
@@ -186,7 +186,7 @@ class SauceStore = SauceStoreBase with _$SauceStore;
 
 abstract class SauceStoreBase with Store {
   static const String host = 'saucenao.com';
-  static const int _maxInputBytes = 32 * 1024 * 1024;
+  static const int _maxInputBytes = maximumReverseImageInputBytes;
   static const int _maxSearchDimension = 1600;
   static const int _maxDecodedPixels = 32 * 1024 * 1024;
 
@@ -227,6 +227,7 @@ abstract class SauceStoreBase with Store {
   String? _selectedSha256;
   Uint8List? _preparedSearchBytes;
   String? _preparedSearchExtension;
+  String? _preparedSearchFailure;
   final List<ReverseImageProviderHit> _sessionHits = [];
   PixivBookmarkVisualSearchController? _bookmarkSearchController;
   BookmarkVisualSearchStatus? _lastBookmarkSearchStatus;
@@ -301,6 +302,7 @@ abstract class SauceStoreBase with Store {
     _selectedSha256 = null;
     _preparedSearchBytes = null;
     _preparedSearchExtension = null;
+    _preparedSearchFailure = null;
     _sessionHits.clear();
     _lastBookmarkSearchStatus = null;
     _lastBookmarkSearchDetail = null;
@@ -477,8 +479,8 @@ abstract class SauceStoreBase with Store {
           ? await pickedFile.length()
           : await File(selectedPath!).length();
       if (_disposed) return null;
-      if (inputLength < 0 || inputLength > _maxInputBytes) {
-        _fail('Image is too large (maximum 32 MB)');
+      if (!isReverseImageReportedByteLengthAllowed(inputLength)) {
+        _fail('Image is too large (maximum 52 MiB)');
         return null;
       }
       final originImageBytes = pickedFile != null
@@ -487,8 +489,8 @@ abstract class SauceStoreBase with Store {
       if (_disposed) return null;
       // Some document providers cannot report a size before the file is read.
       if (originImageBytes == null ||
-          originImageBytes.length > _maxInputBytes) {
-        _fail('Image is too large (maximum 32 MB)');
+          !isReverseImageInputByteLengthAllowed(originImageBytes.length)) {
+        _fail('Image is too large (maximum 52 MiB)');
         return null;
       }
       _selectedOriginBytes = originImageBytes;
@@ -637,7 +639,7 @@ abstract class SauceStoreBase with Store {
       final prepared = await _ensurePreparedSearchImage(originImageBytes);
       if (_disposed) return null;
       if (prepared == null) {
-        _fail('Image is too large or unsupported');
+        _fail(_preparedSearchFailure ?? 'Unsupported or damaged image format');
         return null;
       }
       final preparedBytes = prepared['bytes'] as Uint8List;
@@ -828,7 +830,9 @@ abstract class SauceStoreBase with Store {
         if (_disposed || !context.mounted) return null;
         if (crop != null) {
           phase.value = SauceSearchPhase.uploading;
-          BotToast.showText(text: 'Deep image search · ${crop.name}');
+          BotToast.showText(
+            text: 'Deep image search · ${_probeEnglishLabel(crop)}',
+          );
           final cropped = await compute(_prepareExternalSearchCrop, {
             'bytes': originImageBytes,
             'probe': crop.name,
@@ -837,6 +841,11 @@ abstract class SauceStoreBase with Store {
             final cropBytes = cropped['bytes'] as Uint8List;
             final cropExtension = cropped['extension'] as String;
             phase.value = SauceSearchPhase.parsing;
+            // This legacy/modal retry is another new probe, just like the
+            // inline-panel retry below. Provider diagnostics must describe the
+            // latest attempt rather than leaving the full-image timeout/TLS
+            // warning visible after this crop succeeds.
+            _replaceServiceMessages(const <String>[]);
             final cropBatch = await _searchExternalProviders(
               cropBytes,
               cropExtension,
@@ -923,16 +932,22 @@ abstract class SauceStoreBase with Store {
     _lastBookmarkSearchDetail = null;
     try {
       phase.value = SauceSearchPhase.inspecting;
-      const limits = BookmarkVisualSearchLimits(
-        maximumPagesPerVisibility: 30,
-        maximumWorks: 1800,
-        maximumImages: 2400,
+      // Pixiv commonly returns about 30 works per bookmark page. A 50-page
+      // per-visibility cap could therefore stop an all-public (or all-private)
+      // collection around 1500 works even though the global safety budget is
+      // 3000. One hundred pages lets either visibility consume that declared
+      // budget while the global work/image caps and cancellation still bound
+      // network and decode cost.
+      const bookmarkLimits = BookmarkVisualSearchLimits(
+        maximumPagesPerVisibility: 100,
+        maximumWorks: 3000,
+        maximumImages: 6000,
         downloadConcurrency: 2,
         maximumDistance: 4,
         minimumDistanceGap: 3,
       );
       controller = await PixivBookmarkVisualSearchController.createDefault(
-        limits: limits,
+        limits: bookmarkLimits,
       );
       if (_disposed || !context.mounted) {
         controller.dispose();
@@ -1005,7 +1020,7 @@ abstract class SauceStoreBase with Store {
         }
         activeController.dispose();
         controller = await PixivBookmarkVisualSearchController.createDefault(
-          limits: limits,
+          limits: bookmarkLimits,
           allowEarlyExactPerceptualMatch: false,
         );
         if (_disposed || !context.mounted) {
@@ -1246,7 +1261,7 @@ abstract class SauceStoreBase with Store {
       _updateSessionStep(
         ReverseImageSessionStepId.crop,
         ReverseImageSessionStepState.running,
-        detail: 'Preparing ${probe.name} region',
+        detail: 'Preparing ${_probeEnglishLabel(probe)} probe',
       );
       final cropped = await compute(_prepareExternalSearchCrop, {
         'bytes': originBytes,
@@ -1265,6 +1280,10 @@ abstract class SauceStoreBase with Store {
       final cropBytes = cropped['bytes'] as Uint8List;
       final cropExtension = cropped['extension'] as String;
       phase.value = SauceSearchPhase.parsing;
+      // Provider diagnostics describe the latest probe. Keep accumulated
+      // candidates, but do not leave a stale timeout/TLS warning visible after
+      // a later region or half-image retry succeeds.
+      _replaceServiceMessages(const <String>[]);
       final batch = await _searchExternalProviders(
         cropBytes,
         cropExtension,
@@ -1309,11 +1328,11 @@ abstract class SauceStoreBase with Store {
         ReverseImageSessionStepId.crop,
         cropState,
         detail: batch.successfulProviders == 0
-            ? 'Both external providers failed for ${probe.name}'
+            ? 'Both external providers failed for ${_probeEnglishLabel(probe)}'
             : (retainedFromProbe == 0
-                  ? 'No reliable candidate in ${probe.name} region'
+                  ? 'No reliable candidate from ${_probeEnglishLabel(probe)}'
                   : '$retainedFromProbe retained candidate(s) from '
-                        '${probe.name} region'),
+                        '${_probeEnglishLabel(probe)}'),
       );
       final hasCandidates = sessionCandidates.isNotEmpty;
       final providersUnavailable = batch.successfulProviders == 0;
@@ -1468,8 +1487,17 @@ abstract class SauceStoreBase with Store {
     }
     final prepared = await compute(_prepareExternalSearchImage, originBytes);
     if (_disposed || prepared == null) return null;
+    final failure = prepared['error'];
+    if (failure is String) {
+      _preparedSearchFailure = switch (failure) {
+        'pixel_limit' => 'Image exceeds the 32 megapixel decode limit',
+        _ => 'Unsupported or damaged image format',
+      };
+      return null;
+    }
     final bytes = prepared['bytes'] as Uint8List;
     final extension = prepared['extension'] as String;
+    _preparedSearchFailure = null;
     _preparedSearchBytes = bytes;
     _preparedSearchExtension = extension;
     // Never hand an unvalidated, potentially huge compressed image directly to
@@ -1680,16 +1708,21 @@ abstract class SauceStoreBase with Store {
     }
 
     final sauceCandidateCount = hits.length;
+    final sauceResultLabel = sauceCandidateCount == 0
+        ? 'No SauceNAO result'
+        : '$sauceCandidateCount result(s) ready below';
     final sauceDetail = cancelToken.isCancelled
         ? 'Cancelled by user'
         : successfulProviders == 0
         ? (messages.isEmpty ? 'SauceNAO unavailable' : messages.join(' · '))
         : searchedAllIndexes
         ? allIndexesCompleted
-              ? '$sauceCandidateCount candidate(s) · Pixiv and all indexes searched'
-              : '$sauceCandidateCount candidate(s) · Pixiv results kept; '
+              ? '$sauceResultLabel · '
+                    'Pixiv and all indexes searched'
+              : '$sauceResultLabel · '
+                    'Pixiv results kept; '
                     'all-index fallback unavailable'
-        : '$sauceCandidateCount candidate(s) · decisive Pixiv-index match';
+        : '$sauceResultLabel · decisive Pixiv-index match';
     _updateSessionStep(
       ReverseImageSessionStepId.sauceNao,
       cancelToken.isCancelled
@@ -1973,26 +2006,32 @@ abstract class SauceStoreBase with Store {
 
   Future<ReverseImageProbeKind?> _chooseCropRetry(BuildContext context) async {
     final isChinese = Localizations.localeOf(context).languageCode == 'zh';
-    final title = isChinese ? '尝试区域识图？' : 'Retry with one region?';
+    final title = isChinese ? '尝试一次变换识图？' : 'Retry with one probe?';
     final message = isChinese
-        ? '全图没有找到候选。你可以选择一个保留主体的区域，再向 SauceNAO 和 IQDB 各提交一次去除元数据的裁剪副本。'
-        : 'No full-image candidate was found. Choose one subject region to '
-              'submit one metadata-free crop to SauceNAO and IQDB.';
+        ? '全图没有找到候选。可以裁出一个保留主体的区域；如果输入本来就是原图的上半或下半，请选择对应的“输入是半图”，它会保留全部现有像素而不会再次裁剪。每次只提交你点选的一个去除元数据副本。'
+        : 'No full-image candidate was found. Choose a subject crop, or choose '
+              'the matching half-image action when the input is already the '
+              'top or bottom half. Half-image probes retain every supplied '
+              'pixel. Only the one probe you choose is submitted.';
     const options = [
       ReverseImageProbeKind.center,
       ReverseImageProbeKind.left,
       ReverseImageProbeKind.right,
       ReverseImageProbeKind.top,
       ReverseImageProbeKind.bottom,
+      ReverseImageProbeKind.inputTopHalf,
+      ReverseImageProbeKind.inputBottomHalf,
     ];
     String label(ReverseImageProbeKind value) {
-      if (!isChinese) return value.name;
+      if (!isChinese) return _probeEnglishLabel(value);
       return switch (value) {
         ReverseImageProbeKind.center => '中央',
         ReverseImageProbeKind.left => '左侧',
         ReverseImageProbeKind.right => '右侧',
         ReverseImageProbeKind.top => '上方',
         ReverseImageProbeKind.bottom => '下方',
+        ReverseImageProbeKind.inputTopHalf => '输入是上半图（缺下半）',
+        ReverseImageProbeKind.inputBottomHalf => '输入是下半图（缺上半）',
         ReverseImageProbeKind.full => '全图',
       };
     }
@@ -2044,7 +2083,11 @@ abstract class SauceStoreBase with Store {
               ...options.map(
                 (option) => ListTile(
                   title: Text(label(option)),
-                  trailing: const Icon(Icons.crop),
+                  trailing: Icon(
+                    option.isHalfImageInput
+                        ? Icons.vertical_align_center
+                        : Icons.crop,
+                  ),
                   onTap: () => Navigator.of(dialogContext).pop(option),
                 ),
               ),
@@ -2282,40 +2325,60 @@ abstract class SauceStoreBase with Store {
 }
 
 Map<String, Object>? _prepareExternalSearchImage(Uint8List originImageBytes) {
-  if (originImageBytes.length > SauceStoreBase._maxInputBytes) return null;
+  if (originImageBytes.isEmpty ||
+      originImageBytes.length > SauceStoreBase._maxInputBytes) {
+    return const <String, Object>{'error': 'unsupported'};
+  }
   final extension = _detectImageExtension(originImageBytes);
-  if (extension == null) return null;
+  if (extension == null) {
+    return const <String, Object>{'error': 'unsupported'};
+  }
 
-  final decoder = findDecoderForData(originImageBytes);
-  if (decoder == null) return null;
+  final decoder = img.findDecoderForData(originImageBytes);
+  if (decoder == null) {
+    return const <String, Object>{'error': 'unsupported'};
+  }
   final info = decoder.startDecode(originImageBytes);
-  if (info == null || info.width <= 0 || info.height <= 0) return null;
+  if (info == null || info.width <= 0 || info.height <= 0) {
+    return const <String, Object>{'error': 'unsupported'};
+  }
   final pixels = info.width * info.height;
-  if (pixels > SauceStoreBase._maxDecodedPixels) return null;
-  final longestSide = info.width > info.height ? info.width : info.height;
+  if (pixels > SauceStoreBase._maxDecodedPixels) {
+    return const <String, Object>{'error': 'pixel_limit'};
+  }
   final originImage = decoder.decodeFrame(0);
-  if (originImage == null) return null;
+  if (originImage == null) {
+    return const <String, Object>{'error': 'unsupported'};
+  }
+  final oriented =
+      originImage.exif.imageIfd.hasOrientation &&
+          originImage.exif.imageIfd.orientation != 1
+      ? img.bakeOrientation(originImage)
+      : originImage;
+  final longestSide = oriented.width > oriented.height
+      ? oriented.width
+      : oriented.height;
   final resized = longestSide <= SauceStoreBase._maxSearchDimension
-      ? originImage
-      : copyResize(
-          originImage,
+      ? oriented
+      : img.copyResize(
+          oriented,
           width:
-              (originImage.width *
+              (oriented.width *
                       SauceStoreBase._maxSearchDimension /
                       longestSide)
                   .round(),
           height:
-              (originImage.height *
+              (oriented.height *
                       SauceStoreBase._maxSearchDimension /
                       longestSide)
                   .round(),
         );
   // Always re-encode the external-search copy. This strips EXIF/text metadata
   // and prevents an original gallery file from being sent to a third party.
-  resized.exif = ExifData();
+  resized.exif = img.ExifData();
   resized.iccProfile = null;
   resized.textData = null;
-  return {'bytes': encodeJpg(resized, quality: 90), 'extension': 'jpg'};
+  return {'bytes': img.encodeJpg(resized, quality: 90), 'extension': 'jpg'};
 }
 
 Map<String, Object>? _prepareExternalSearchCrop(Map<String, Object> request) {
@@ -2332,43 +2395,121 @@ Map<String, Object>? _prepareExternalSearchCrop(Map<String, Object> request) {
   }
   if (probe == null || probe == ReverseImageProbeKind.full) return null;
 
-  final decoder = findDecoderForData(bytes);
+  final decoder = img.findDecoderForData(bytes);
   if (decoder == null) return null;
   final info = decoder.startDecode(bytes);
   if (info == null || info.width <= 0 || info.height <= 0) return null;
   if (info.width * info.height > SauceStoreBase._maxDecodedPixels) return null;
   final image = decoder.decodeFrame(0);
   if (image == null) return null;
+  final oriented =
+      image.exif.imageIfd.hasOrientation && image.exif.imageIfd.orientation != 1
+      ? img.bakeOrientation(image)
+      : image;
 
-  final region = planReverseImageProbeRegions(
-    image.width,
-    image.height,
-  ).singleWhere((region) => region.kind == probe);
-  var cropped = copyCrop(
-    image,
-    x: region.x,
-    y: region.y,
-    width: region.width,
-    height: region.height,
+  final layout = planReverseImageProbeLayout(
+    oriented.width,
+    oriented.height,
+    probe,
+    maximumOutputDimension: SauceStoreBase._maxSearchDimension,
   );
-  final longestSide = cropped.width > cropped.height
-      ? cropped.width
-      : cropped.height;
-  if (longestSide > SauceStoreBase._maxSearchDimension) {
-    cropped = copyResize(
-      cropped,
-      width: (cropped.width * SauceStoreBase._maxSearchDimension / longestSide)
-          .round(),
-      height:
-          (cropped.height * SauceStoreBase._maxSearchDimension / longestSide)
-              .round(),
+  var content = probe.isHalfImageInput
+      ? oriented
+      : img.copyCrop(
+          oriented,
+          x: layout.source.x,
+          y: layout.source.y,
+          width: layout.source.width,
+          height: layout.source.height,
+        );
+  if (content.width != layout.outputContentWidth ||
+      content.height != layout.outputContentHeight) {
+    content = img.copyResize(
+      content,
+      width: layout.outputContentWidth,
+      height: layout.outputContentHeight,
     );
   }
-  cropped.exif = ExifData();
-  cropped.iccProfile = null;
-  cropped.textData = null;
-  return {'bytes': encodeJpg(cropped, quality: 90), 'extension': 'jpg'};
+
+  final img.Image prepared;
+  if (probe.isHalfImageInput) {
+    prepared = img.Image(
+      width: layout.outputWidth,
+      height: layout.outputHeight,
+      numChannels: 3,
+    );
+    // Use a flat color sampled from the cut boundary. It is less likely to add
+    // false local features than mirroring or stretching the edge, while its
+    // adapted tone avoids a harsh black/white seam dominating global matching.
+    img.fill(prepared, color: _halfProbePaddingColor(oriented, probe));
+    img.compositeImage(
+      prepared,
+      content,
+      dstX: layout.outputDestinationX,
+      dstY: layout.outputDestinationY,
+    );
+  } else {
+    prepared = content;
+  }
+  prepared.exif = img.ExifData();
+  prepared.iccProfile = null;
+  prepared.textData = null;
+  return {'bytes': img.encodeJpg(prepared, quality: 90), 'extension': 'jpg'};
 }
+
+/// Exposes the pure preparation isolate entry point to focused regression
+/// tests without making callers bypass the Store's upload confirmation flow.
+@visibleForTesting
+Map<String, Object>? prepareExternalSearchImageForTesting(Uint8List bytes) =>
+    _prepareExternalSearchImage(bytes);
+
+/// Exposes one crop/half-image encoding pass for pixel-level regression tests.
+@visibleForTesting
+Map<String, Object>? prepareExternalSearchProbeForTesting(
+  Uint8List bytes,
+  ReverseImageProbeKind probe,
+) => _prepareExternalSearchCrop(<String, Object>{
+  'bytes': bytes,
+  'probe': probe.name,
+});
+
+img.ColorRgb8 _halfProbePaddingColor(
+  img.Image image,
+  ReverseImageProbeKind probe,
+) {
+  final rows = image.height < 8 ? image.height : 8;
+  final firstY = probe == ReverseImageProbeKind.inputTopHalf
+      ? image.height - rows
+      : 0;
+  var red = 0.0;
+  var green = 0.0;
+  var blue = 0.0;
+  var count = 0;
+  final xStep = image.width > 512 ? (image.width / 512).ceil() : 1;
+  for (var y = firstY; y < firstY + rows; y++) {
+    for (var x = 0; x < image.width; x += xStep) {
+      final pixel = image.getPixel(x, y);
+      red += pixel.rNormalized.toDouble();
+      green += pixel.gNormalized.toDouble();
+      blue += pixel.bNormalized.toDouble();
+      count++;
+    }
+  }
+  int channel(double sum) =>
+      ((sum / count) * 255).round().clamp(0, 255).toInt();
+  return img.ColorRgb8(channel(red), channel(green), channel(blue));
+}
+
+String _probeEnglishLabel(ReverseImageProbeKind probe) => switch (probe) {
+  ReverseImageProbeKind.full => 'full image',
+  ReverseImageProbeKind.center => 'center crop',
+  ReverseImageProbeKind.left => 'left crop',
+  ReverseImageProbeKind.right => 'right crop',
+  ReverseImageProbeKind.top => 'top crop',
+  ReverseImageProbeKind.bottom => 'bottom crop',
+  ReverseImageProbeKind.inputTopHalf => 'top-half input (bottom missing)',
+  ReverseImageProbeKind.inputBottomHalf => 'bottom-half input (top missing)',
+};
 
 String? _detectImageExtension(Uint8List bytes) {
   if (bytes.length >= 3 &&

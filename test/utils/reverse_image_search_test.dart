@@ -4,6 +4,36 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:pixez/utils/reverse_image_search.dart';
 
 void main() {
+  group('reverse-image input byte limit', () {
+    test('accepts only non-empty inputs through the exact 52 MiB boundary', () {
+      expect(isReverseImageInputByteLengthAllowed(0), isFalse);
+      expect(isReverseImageReportedByteLengthAllowed(-1), isFalse);
+      expect(isReverseImageReportedByteLengthAllowed(0), isTrue);
+      expect(
+        isReverseImageInputByteLengthAllowed(maximumReverseImageInputBytes - 1),
+        isTrue,
+      );
+      expect(
+        isReverseImageInputByteLengthAllowed(maximumReverseImageInputBytes),
+        isTrue,
+      );
+      expect(
+        isReverseImageReportedByteLengthAllowed(maximumReverseImageInputBytes),
+        isTrue,
+      );
+      expect(
+        isReverseImageInputByteLengthAllowed(maximumReverseImageInputBytes + 1),
+        isFalse,
+      );
+      expect(
+        isReverseImageReportedByteLengthAllowed(
+          maximumReverseImageInputBytes + 1,
+        ),
+        isFalse,
+      );
+    });
+  });
+
   group('planReverseImageProbeRegions', () {
     test('keeps a full probe and overlapping side probes in bounds', () {
       final probes = planReverseImageProbeRegions(1000, 500);
@@ -37,6 +67,121 @@ void main() {
       expect(() => planReverseImageProbeRegions(0, 100), throwsArgumentError);
       expect(
         () => planReverseImageProbeRegions(100, 100, sideFraction: 0.5),
+        throwsArgumentError,
+      );
+    });
+  });
+
+  group('planReverseImageProbeLayout', () {
+    test('places an existing top half without cropping any source pixel', () {
+      final layout = planReverseImageProbeLayout(
+        640,
+        360,
+        ReverseImageProbeKind.inputTopHalf,
+      );
+
+      expect(layout.preservesWholeInput, isTrue);
+      expect(
+        [
+          layout.source.x,
+          layout.source.y,
+          layout.source.width,
+          layout.source.height,
+        ],
+        [0, 0, 640, 360],
+      );
+      expect([layout.canvasWidth, layout.canvasHeight], [640, 720]);
+      expect([layout.destinationX, layout.destinationY], [0, 0]);
+      expect([layout.outputWidth, layout.outputHeight], [640, 720]);
+      expect(
+        [layout.outputContentWidth, layout.outputContentHeight],
+        [640, 360],
+      );
+      expect([layout.outputDestinationX, layout.outputDestinationY], [0, 0]);
+    });
+
+    test('places an existing bottom half in the lower canvas half', () {
+      final layout = planReverseImageProbeLayout(
+        640,
+        360,
+        ReverseImageProbeKind.inputBottomHalf,
+      );
+
+      expect(layout.preservesWholeInput, isTrue);
+      expect(
+        [layout.source.width, layout.source.height],
+        [640, 360],
+        reason: 'the half-image action must not enter the 70% crop path',
+      );
+      expect(layout.destinationY, 360);
+      expect(layout.outputDestinationY, 360);
+      expect(
+        layout.outputDestinationY + layout.outputContentHeight,
+        layout.outputHeight,
+      );
+    });
+
+    test('keeps subject crop semantics separate from half-image padding', () {
+      final crop = planReverseImageProbeLayout(
+        640,
+        360,
+        ReverseImageProbeKind.top,
+      );
+      final half = planReverseImageProbeLayout(
+        640,
+        360,
+        ReverseImageProbeKind.inputTopHalf,
+      );
+
+      expect(crop.source.height, 252);
+      expect(crop.canvasHeight, 252);
+      expect(crop.preservesWholeInput, isFalse);
+      expect(half.source.height, 360);
+      expect(half.canvasHeight, 720);
+    });
+
+    test('bounds the composed output before a canvas is allocated', () {
+      final bottom = planReverseImageProbeLayout(
+        3000,
+        2000,
+        ReverseImageProbeKind.inputBottomHalf,
+      );
+      final extreme = planReverseImageProbeLayout(
+        100000,
+        1,
+        ReverseImageProbeKind.inputTopHalf,
+      );
+
+      expect([bottom.outputWidth, bottom.outputHeight], [1200, 1600]);
+      expect(
+        [bottom.outputContentWidth, bottom.outputContentHeight],
+        [1200, 800],
+      );
+      expect(bottom.outputDestinationY, 800);
+      for (final layout in [bottom, extreme]) {
+        expect(layout.outputWidth, inInclusiveRange(1, 1600));
+        expect(layout.outputHeight, inInclusiveRange(2, 1600));
+        expect(layout.outputDestinationX, greaterThanOrEqualTo(0));
+        expect(layout.outputDestinationY, greaterThanOrEqualTo(0));
+        expect(
+          layout.outputDestinationX + layout.outputContentWidth,
+          lessThanOrEqualTo(layout.outputWidth),
+        );
+        expect(
+          layout.outputDestinationY + layout.outputContentHeight,
+          lessThanOrEqualTo(layout.outputHeight),
+        );
+      }
+    });
+
+    test('rejects dimensions that cannot represent both canvas halves', () {
+      expect(
+        () => planReverseImageProbeLayout(
+          100,
+          100,
+          ReverseImageProbeKind.inputTopHalf,
+          maximumOutputDimension: 1,
+        ),
         throwsArgumentError,
       );
     });

@@ -20,6 +20,13 @@ enum BookmarkVisualSearchStatus {
 
 enum BookmarkVisualMatchKind { exactBytes, exactPerceptual, nearPerceptual }
 
+/// The portion of a Pixiv candidate used for a perceptual comparison.
+///
+/// The selected query image is always compared as a whole. Region hashes on a
+/// candidate allow an already-cropped upper/lower copy to be matched
+/// without reconstructing any missing pixels.
+enum BookmarkVisualRegion { full, top, bottom }
+
 /// Marks a failure that happened while decoding the user-selected query image.
 ///
 /// Candidate downloads and Pixiv page parsing can also throw
@@ -111,11 +118,21 @@ abstract interface class BookmarkVisualImageFetcher {
 class BookmarkVisualFingerprint {
   final String sha256;
   final String? differenceHash;
+  final Map<BookmarkVisualRegion, String> regionDifferenceHashes;
 
   const BookmarkVisualFingerprint({
     required this.sha256,
     required this.differenceHash,
+    this.regionDifferenceHashes = const <BookmarkVisualRegion, String>{},
   });
+
+  Iterable<MapEntry<BookmarkVisualRegion, String>> get validDifferenceHashes {
+    final hashes = <BookmarkVisualRegion, String>{
+      if (differenceHash != null) BookmarkVisualRegion.full: differenceHash!,
+      ...regionDifferenceHashes,
+    };
+    return hashes.entries.where((entry) => isValidDifferenceHash(entry.value));
+  }
 }
 
 abstract interface class BookmarkVisualFingerprintComputer {
@@ -250,6 +267,7 @@ class BookmarkVisualCandidate {
   final BookmarkVisualMatchKind kind;
   final int? distance;
   final String imageUrl;
+  final BookmarkVisualRegion region;
 
   const BookmarkVisualCandidate({
     required this.illustId,
@@ -258,6 +276,7 @@ class BookmarkVisualCandidate {
     required this.kind,
     required this.distance,
     required this.imageUrl,
+    this.region = BookmarkVisualRegion.full,
   });
 
   double? get similarity =>
@@ -487,13 +506,23 @@ class BookmarkVisualSearchService {
                     fingerprint.sha256.toLowerCase() ==
                     queryFingerprint.sha256.toLowerCase();
                 int? distance;
+                var matchedRegion = BookmarkVisualRegion.full;
                 final queryHash = queryFingerprint.differenceHash;
-                final candidateHash = fingerprint.differenceHash;
-                if (queryHash != null &&
-                    candidateHash != null &&
-                    isValidDifferenceHash(queryHash) &&
-                    isValidDifferenceHash(candidateHash)) {
-                  distance = differenceHashDistance(queryHash, candidateHash);
+                if (queryHash != null && isValidDifferenceHash(queryHash)) {
+                  for (final candidateHash
+                      in fingerprint.validDifferenceHashes) {
+                    final candidateDistance = differenceHashDistance(
+                      queryHash,
+                      candidateHash.value,
+                    );
+                    // The full image is emitted first. Keeping the first value
+                    // on a tie prevents a crop from replacing equally strong
+                    // full-image evidence.
+                    if (distance == null || candidateDistance < distance) {
+                      distance = candidateDistance;
+                      matchedRegion = candidateHash.key;
+                    }
+                  }
                 }
                 if (!exactBytes && distance == null) {
                   progress = progress.copyWith(
@@ -513,6 +542,7 @@ class BookmarkVisualSearchService {
                       exactBytes: exactBytes,
                       distance: distance,
                       imageUrl: job.image.url,
+                      region: matchedRegion,
                     ),
                   );
                 }
@@ -635,7 +665,14 @@ class BookmarkVisualSearchService {
   ) {
     final resolution = _resolve(rawCandidates);
     final match = resolution.match;
-    return match != null && match.distance == 0 ? match : null;
+    // A regional hash is intentionally candidate-only evidence. Do not stop a
+    // long scan early for a crop collision; finish the bounded/cancellable scan
+    // and apply the normal runner-up gap before asking the user to confirm it.
+    return match != null &&
+            match.distance == 0 &&
+            match.region == BookmarkVisualRegion.full
+        ? match
+        : null;
   }
 
   BookmarkVisualCandidate? _uniqueExactBytes(
@@ -837,6 +874,7 @@ BookmarkVisualCandidate _toCandidate(_RawCandidate raw) {
     kind: kind,
     distance: raw.distance,
     imageUrl: raw.imageUrl,
+    region: raw.region,
   );
 }
 
@@ -859,6 +897,7 @@ class _RawCandidate {
   final bool exactBytes;
   final int? distance;
   final String imageUrl;
+  final BookmarkVisualRegion region;
 
   const _RawCandidate({
     required this.illustId,
@@ -867,6 +906,7 @@ class _RawCandidate {
     required this.exactBytes,
     required this.distance,
     required this.imageUrl,
+    required this.region,
   });
 }
 

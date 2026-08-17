@@ -194,6 +194,16 @@ void main() {
       throwsA(isA<IqdbResponseException>()),
     );
     expect(
+      () => parseIqdbResults("<div class='err'>Can't read query result!</div>"),
+      throwsA(
+        isA<IqdbResponseException>().having(
+          (error) => error.message,
+          'message',
+          'IQDB server could not complete this search',
+        ),
+      ),
+    );
+    expect(
       () => parseIqdbResults(
         '<title>Just a moment...</title>'
         '<script src="/cdn-cgi/challenge-platform/main.js"></script>',

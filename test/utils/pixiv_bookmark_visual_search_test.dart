@@ -4,8 +4,10 @@ import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:image/image.dart' as image;
 import 'package:pixez/network/api_client.dart';
 import 'package:pixez/utils/bookmark_visual_search.dart';
+import 'package:pixez/utils/image_perceptual_hash.dart';
 import 'package:pixez/utils/pixiv_bookmark_visual_search.dart';
 
 void main() {
@@ -109,6 +111,67 @@ void main() {
         });
       },
     );
+  });
+
+  group('FlutterBookmarkVisualFingerprintComputer', () {
+    test('computes full and crop hashes from a candidate image', () async {
+      final source = image.Image(width: 180, height: 240);
+      for (var y = 0; y < source.height; y++) {
+        for (var x = 0; x < source.width; x++) {
+          final top = y < source.height ~/ 2;
+          final value = top
+              ? (x * 255 ~/ (source.width - 1))
+              : ((source.width - 1 - x) * 255 ~/ (source.width - 1));
+          source.setPixelRgba(
+            x,
+            y,
+            value,
+            top ? (255 - value) : value,
+            top ? value : (255 - value),
+            255,
+          );
+        }
+      }
+      final query = image.copyCrop(
+        source,
+        x: 0,
+        y: 0,
+        width: source.width,
+        height: source.height ~/ 2,
+      );
+      final computer = FlutterBookmarkVisualFingerprintComputer();
+
+      final queryFingerprint = await computer.compute(
+        Uint8List.fromList(image.encodePng(query)),
+      );
+      final candidateFingerprint = await computer.compute(
+        Uint8List.fromList(image.encodePng(source)),
+      );
+
+      expect(
+        candidateFingerprint.regionDifferenceHashes.keys,
+        unorderedEquals(<BookmarkVisualRegion>[
+          BookmarkVisualRegion.full,
+          BookmarkVisualRegion.top,
+          BookmarkVisualRegion.bottom,
+        ]),
+      );
+      expect(
+        differenceHashDistance(
+          queryFingerprint.differenceHash!,
+          candidateFingerprint.differenceHash!,
+        ),
+        greaterThan(4),
+      );
+      expect(
+        differenceHashDistance(
+          queryFingerprint.differenceHash!,
+          candidateFingerprint.regionDifferenceHashes[BookmarkVisualRegion
+              .top]!,
+        ),
+        0,
+      );
+    });
   });
 
   group('parsePixivBookmarkVisualPage', () {

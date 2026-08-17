@@ -129,9 +129,20 @@ String _normalizedMultipart(_CapturedRequest request) {
   return latin1.decode(request.body).replaceAll(boundary, '<boundary>');
 }
 
+List<String> _multipartServiceIds(_CapturedRequest request) {
+  return RegExp(r'name="service\[\]"\r\n\r\n([^\r\n]+)')
+      .allMatches(_normalizedMultipart(request))
+      .map((match) => match.group(1)!)
+      .toList();
+}
+
 ResponseBody _okResponse() => ResponseBody.fromString('<html></html>', 200);
 
 void main() {
+  test('uses a 45 second total budget for the reduced core-index query', () {
+    expect(IqdbSearchProvider.defaultTotalTimeout, const Duration(seconds: 45));
+  });
+
   test(
     'rebuilds identical multipart data when typed certificate fallback succeeds',
     () async {
@@ -166,6 +177,7 @@ void main() {
         _normalizedMultipart(requests[0]),
         contains(latin1.decode(_query().bytes)),
       );
+      expect(_multipartServiceIds(requests[0]), <String>['1', '2', '3', '11']);
     },
   );
 

@@ -65,7 +65,7 @@ void main() {
     expect(result.confidence, ReverseImageCandidateConfidence.medium);
   });
 
-  test('keeps a weak Pixiv candidate only with independent evidence', () {
+  test('shows a weak Pixiv candidate but keeps it low confidence', () {
     final single = buildReverseImageDisplayCandidates([
       hit(
         provider: 'saucenao',
@@ -89,9 +89,41 @@ void main() {
       ),
     ]).single;
 
-    expect(single, isEmpty);
+    expect(single, hasLength(1));
+    expect(single.single.illustId, 19871999);
+    expect(single.single.confidence, ReverseImageCandidateConfidence.low);
     expect(repeated.illustId, 19871999);
     expect(repeated.confidence, ReverseImageCandidateConfidence.low);
+  });
+
+  test('shows every weak Pixiv result without making it auto-openable', () {
+    final hits = <ReverseImageProviderHit>[
+      for (var index = 0; index < 8; index++)
+        hit(
+          provider: 'saucenao',
+          similarity: 44 - index.toDouble(),
+          illustId: 20000000 + index,
+          sourceUrl: 'https://www.pixiv.net/artworks/${20000000 + index}',
+        ),
+    ];
+
+    final display = buildReverseImageDisplayCandidates(hits);
+    final autoCandidates = aggregateReverseImageHits(hits);
+
+    expect(display, hasLength(8));
+    expect(
+      display.every(
+        (candidate) =>
+            candidate.confidence == ReverseImageCandidateConfidence.low,
+      ),
+      isTrue,
+    );
+    expect(autoCandidates, isEmpty);
+    expect(chooseReverseImageAutoOpenCandidate(autoCandidates), isNull);
+  });
+
+  test('keeps the selected-image encoded-size limit at 52 MiB', () {
+    expect(maximumReverseImageInputBytes, 52 * 1024 * 1024);
   });
 
   test('deduplicates a generic source by URL and keeps its best hit', () {

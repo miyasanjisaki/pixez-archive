@@ -132,8 +132,9 @@ String? extractPixivCandidateThumbnailUrl(Object? responseData) {
 
 /// Produces the complete, stable candidate list shown by the image-search page.
 ///
-/// Unlike the old modal dialog this does not truncate to five rows. A weak
-/// Pixiv candidate is retained only when another provider or crop agrees;
+/// Unlike the old modal dialog this does not truncate to five rows. Every
+/// provider-validated result is shown so the service's result count cannot
+/// disagree with an apparently empty page. Weak results remain display-only:
 /// confidence is shown to the user and no candidate is opened automatically.
 List<ReverseImageDisplayCandidate> buildReverseImageDisplayCandidates(
   Iterable<ReverseImageProviderHit> hits,
@@ -167,7 +168,11 @@ List<ReverseImageDisplayCandidate> buildReverseImageDisplayCandidates(
     final aggregated = best.illustId == null
         ? null
         : aggregatedById[best.illustId];
-    if (best.similarity < 45 && aggregated == null) {
+    // SauceNAO's parser has already required an explicit Pixiv identity and a
+    // minimum similarity for Pixiv hits. Keep those weak hits visible so a
+    // completed provider cannot report N results while the page silently shows
+    // none. Generic URLs still require the stricter 45% display threshold.
+    if (best.illustId == null && best.similarity < 45 && aggregated == null) {
       continue;
     }
     String? firstNonEmpty(Iterable<String?> values) {

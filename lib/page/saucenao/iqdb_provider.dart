@@ -10,17 +10,8 @@ import 'package:pixez/utils/reverse_image_search.dart';
 
 class IqdbSearchProvider implements ReverseImageSearchProvider {
   static const int maxInputBytes = 8 * 1024 * 1024;
-  static const Duration defaultTotalTimeout = Duration(seconds: 30);
-  static const List<String> _safeServiceIds = [
-    '1',
-    '2',
-    '3',
-    '4',
-    '5',
-    '6',
-    '11',
-    '13',
-  ];
+  static const Duration defaultTotalTimeout = Duration(seconds: 45);
+  static const List<String> _safeServiceIds = ['1', '2', '3', '11'];
 
   final ExternalSearchDioClient _dioClient;
   final Duration totalTimeout;

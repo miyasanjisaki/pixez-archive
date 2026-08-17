@@ -184,7 +184,7 @@ bool _looksLikeDirectImage(String value) {
 void _throwForIqdbServicePage(String html) {
   final lower = html.toLowerCase();
   const markers = <String, String>{
-    "can't read query result": 'IQDB could not process the image',
+    "can't read query result": 'IQDB server could not complete this search',
     'file too large': 'IQDB image exceeds the 8 MB limit',
     'unsupported image': 'IQDB does not support this image',
     'temporarily unavailable': 'IQDB is temporarily unavailable',

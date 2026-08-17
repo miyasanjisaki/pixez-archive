@@ -322,6 +322,151 @@ void main() {
     );
 
     test(
+      'matches a whole query against a candidate top-half hash only after the scan',
+      () async {
+        final source = _FakeSource(
+          pages: <String, BookmarkVisualPage>{
+            'public:first': _page(<BookmarkVisualWork>[
+              _work(140739814, <String>['cropped-target']),
+            ]),
+          },
+        );
+        final fingerprints = _FakeFingerprintComputer(<int, _Fingerprint>{
+          9: _fingerprint('9', '0000000000000000'),
+          1: _fingerprint(
+            '1',
+            'ffffffffffffffff',
+            regionDifferenceHashes: const <BookmarkVisualRegion, String>{
+              BookmarkVisualRegion.top: '0000000000000000',
+            },
+          ),
+        });
+        final sink = _FakeSink();
+        final service = BookmarkVisualSearchService(
+          source: source,
+          imageFetcher: _FakeFetcher(<String, int>{'cropped-target': 1}),
+          fingerprintComputer: fingerprints,
+        );
+
+        final result = await service.search(
+          queryBytes: Uint8List.fromList(<int>[9]),
+        );
+
+        expect(result.status, BookmarkVisualSearchStatus.matched);
+        expect(result.match?.illustId, 140739814);
+        expect(result.match?.region, BookmarkVisualRegion.top);
+        expect(result.match?.distance, 0);
+        expect(result.scanComplete, isTrue);
+        expect(result.requiresConfirmation, isTrue);
+        expect(sink.records, isEmpty);
+
+        final confirmed = await BookmarkVisualMatchConfirmer(
+          fingerprintComputer: fingerprints,
+          identitySink: sink,
+        ).confirm(result: result, queryBytes: Uint8List.fromList(<int>[9]));
+        expect(confirmed, isTrue);
+        expect(sink.records.single.illustId, 140739814);
+      },
+    );
+
+    test('applies the runner-up gap across regional candidates', () async {
+      final source = _FakeSource(
+        pages: <String, BookmarkVisualPage>{
+          'public:first': _page(<BookmarkVisualWork>[
+            _work(100, <String>['top']),
+            _work(200, <String>['bottom']),
+          ]),
+        },
+      );
+      final service = BookmarkVisualSearchService(
+        source: source,
+        imageFetcher: _FakeFetcher(<String, int>{'top': 1, 'bottom': 2}),
+        fingerprintComputer: _FakeFingerprintComputer(<int, _Fingerprint>{
+          9: _fingerprint('9', '0000000000000000'),
+          1: _fingerprint(
+            '1',
+            'ffffffffffffffff',
+            regionDifferenceHashes: const <BookmarkVisualRegion, String>{
+              BookmarkVisualRegion.top: '0000000000000001',
+            },
+          ),
+          2: _fingerprint(
+            '2',
+            'ffffffffffffffff',
+            regionDifferenceHashes: const <BookmarkVisualRegion, String>{
+              BookmarkVisualRegion.bottom: '0000000000000003',
+            },
+          ),
+        }),
+        limits: const BookmarkVisualSearchLimits(
+          maximumDistance: 4,
+          minimumDistanceGap: 2,
+        ),
+      );
+
+      final result = await service.search(
+        queryBytes: Uint8List.fromList(<int>[9]),
+      );
+
+      expect(result.status, BookmarkVisualSearchStatus.ambiguous);
+      expect(result.match, isNull);
+      expect(result.candidates.map((candidate) => candidate.distance), <int?>[
+        1,
+        2,
+      ]);
+      expect(result.candidates.first.region, BookmarkVisualRegion.top);
+      expect(result.candidates.last.region, BookmarkVisualRegion.bottom);
+    });
+
+    test(
+      'a regional zero-distance hint cannot hide a later exact byte match',
+      () async {
+        final source = _FakeSource(
+          pages: <String, BookmarkVisualPage>{
+            'public:first': _page(<BookmarkVisualWork>[
+              _work(100, <String>['regional-collision']),
+            ], nextOffset: 30),
+            'private:first': _page(const <BookmarkVisualWork>[]),
+            'public:30': _page(<BookmarkVisualWork>[
+              _work(200, <String>['later-exact']),
+            ]),
+          },
+        );
+        final service = BookmarkVisualSearchService(
+          source: source,
+          imageFetcher: _FakeFetcher(<String, int>{
+            'regional-collision': 1,
+            'later-exact': 2,
+          }),
+          fingerprintComputer: _FakeFingerprintComputer(<int, _Fingerprint>{
+            9: _fingerprint('9', '0000000000000000'),
+            1: _fingerprint(
+              '1',
+              'ffffffffffffffff',
+              regionDifferenceHashes: const <BookmarkVisualRegion, String>{
+                BookmarkVisualRegion.top: '0000000000000000',
+              },
+            ),
+            2: _fingerprint('9', '0000000000000000'),
+          }),
+        );
+
+        final result = await service.search(
+          queryBytes: Uint8List.fromList(<int>[9]),
+        );
+
+        expect(source.calls, <String>[
+          'public:first',
+          'private:first',
+          'public:30',
+        ]);
+        expect(result.status, BookmarkVisualSearchStatus.matched);
+        expect(result.match?.illustId, 200);
+        expect(result.match?.kind, BookmarkVisualMatchKind.exactBytes);
+      },
+    );
+
+    test(
       'cursor repetition tracks both the cursor kind and numeric value',
       () async {
         final source = _FakeSource(
@@ -667,8 +812,17 @@ BookmarkVisualWork _work(int illustId, List<String> urls) {
   );
 }
 
-_Fingerprint _fingerprint(String shaCharacter, String differenceHash) {
-  return _Fingerprint(_sha(shaCharacter), differenceHash);
+_Fingerprint _fingerprint(
+  String shaCharacter,
+  String differenceHash, {
+  Map<BookmarkVisualRegion, String> regionDifferenceHashes =
+      const <BookmarkVisualRegion, String>{},
+}) {
+  return _Fingerprint(
+    _sha(shaCharacter),
+    differenceHash,
+    regionDifferenceHashes,
+  );
 }
 
 String _sha(String character) => List<String>.filled(64, character).join();
@@ -676,8 +830,13 @@ String _sha(String character) => List<String>.filled(64, character).join();
 class _Fingerprint {
   final String sha256;
   final String? differenceHash;
+  final Map<BookmarkVisualRegion, String> regionDifferenceHashes;
 
-  const _Fingerprint(this.sha256, this.differenceHash);
+  const _Fingerprint(
+    this.sha256,
+    this.differenceHash, [
+    this.regionDifferenceHashes = const <BookmarkVisualRegion, String>{},
+  ]);
 }
 
 class _FakeFingerprintComputer implements BookmarkVisualFingerprintComputer {
@@ -692,6 +851,7 @@ class _FakeFingerprintComputer implements BookmarkVisualFingerprintComputer {
     return BookmarkVisualFingerprint(
       sha256: fingerprint.sha256,
       differenceHash: fingerprint.differenceHash,
+      regionDifferenceHashes: fingerprint.regionDifferenceHashes,
     );
   }
 }

@@ -379,9 +379,9 @@ class _ReverseImageSearchPanelState extends State<ReverseImageSearchPanel>
             const SizedBox(height: 12),
             Text(
               _text(
-                '只有半张图、拼图或截图时，选择最接近主体的区域。每次只会额外提交你点选的一个区域。',
-                'For crops, collages or screenshots, choose the region closest '
-                    'to the subject. Only the region you tap is submitted.',
+                '拼图或截图里主体只占一部分时，可以裁出最接近主体的区域。',
+                'For collages or screenshots, crop the region closest to the '
+                    'subject.',
               ),
               style: Theme.of(context).textTheme.bodySmall,
             ),
@@ -395,6 +395,37 @@ class _ReverseImageSearchPanelState extends State<ReverseImageSearchPanel>
                 _cropAction(context, ReverseImageProbeKind.right, '右侧'),
                 _cropAction(context, ReverseImageProbeKind.top, '上方'),
                 _cropAction(context, ReverseImageProbeKind.bottom, '下方'),
+              ],
+            ),
+            const SizedBox(height: 14),
+            Text(
+              _text(
+                '如果输入本身就是被腰斩后的半张图，请选它属于原图的哪一半。这个动作会保留全部现有像素，用低干扰画布表示缺失部分，不会把半图再次裁小。每次只提交你点选的一个探针。',
+                'If the input is already a truncated half image, choose which '
+                    'half of the original it represents. This preserves every '
+                    'supplied pixel and represents the missing area on a '
+                    'low-detail canvas instead of cropping again. Only the '
+                    'probe you tap is submitted.',
+              ),
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                _halfImageAction(
+                  context,
+                  ReverseImageProbeKind.inputTopHalf,
+                  '输入是上半图（缺下半）',
+                  'Input is top half (bottom missing)',
+                ),
+                _halfImageAction(
+                  context,
+                  ReverseImageProbeKind.inputBottomHalf,
+                  '输入是下半图（缺上半）',
+                  'Input is bottom half (top missing)',
+                ),
               ],
             ),
           ],
@@ -414,6 +445,21 @@ class _ReverseImageSearchPanelState extends State<ReverseImageSearchPanel>
           : null,
       icon: const Icon(Icons.crop),
       label: Text(_isChinese ? chineseLabel : probe.name),
+    );
+  }
+
+  Widget _halfImageAction(
+    BuildContext context,
+    ReverseImageProbeKind probe,
+    String chineseLabel,
+    String englishLabel,
+  ) {
+    return OutlinedButton.icon(
+      onPressed: widget.store.canRetryRegion
+          ? () => widget.store.retrySelectedRegion(context, probe)
+          : null,
+      icon: const Icon(Icons.vertical_align_center),
+      label: Text(_isChinese ? chineseLabel : englishLabel),
     );
   }
 
@@ -699,7 +745,10 @@ class _ReverseImageSearchPanelState extends State<ReverseImageSearchPanel>
     ReverseImageSessionStepId.sauceNao => 'SauceNAO',
     ReverseImageSessionStepId.iqdb => 'IQDB',
     ReverseImageSessionStepId.results => _text('整理候选', 'Rank candidates'),
-    ReverseImageSessionStepId.crop => _text('区域识图', 'Region search'),
+    ReverseImageSessionStepId.crop => _text(
+      '区域 / 半图识图',
+      'Region / half-image search',
+    ),
   };
 
   String _probeLabel(ReverseImageProbeKind probe) => switch (probe) {
@@ -709,6 +758,14 @@ class _ReverseImageSearchPanelState extends State<ReverseImageSearchPanel>
     ReverseImageProbeKind.right => _text('右侧', 'right'),
     ReverseImageProbeKind.top => _text('上方', 'top'),
     ReverseImageProbeKind.bottom => _text('下方', 'bottom'),
+    ReverseImageProbeKind.inputTopHalf => _text(
+      '上半图探针（缺下半）',
+      'top-half input probe',
+    ),
+    ReverseImageProbeKind.inputBottomHalf => _text(
+      '下半图探针（缺上半）',
+      'bottom-half input probe',
+    ),
   };
 
   String _stepStateLabel(ReverseImageSessionStepState state) => switch (state) {

@@ -12,15 +12,15 @@ import 'package:pixez/models/download_identity_index.dart';
 import 'package:pixez/network/api_client.dart';
 import 'package:pixez/utils/bookmark_visual_search.dart';
 import 'package:pixez/utils/image_perceptual_hash.dart';
+import 'package:pixez/utils/reverse_image_search.dart';
 
 const String _pixivBookmarkPath = '/v1/user/bookmarks/illust';
 const String _pixivApiHost = 'app-api.pixiv.net';
 const String _pixivImageHost = 'i.pximg.net';
 // Keep the query-image boundary aligned with the local identity and sanitized
-// preview paths. Otherwise a 24-32 MP image can pass local inspection but fail
+// preview paths. Otherwise a large image can pass local inspection but fail
 // the bookmark scan before the first Pixiv request is made.
 const int maximumBookmarkFingerprintPixels = 32 * 1024 * 1024;
-const int _maximumBookmarkFingerprintBytes = 32 * 1024 * 1024;
 
 /// Returns a short, sanitized explanation suitable for the search-progress UI.
 /// Never surface request URLs, response bodies, account IDs, or access tokens.
@@ -216,8 +216,11 @@ class FlutterBookmarkVisualFingerprintComputer
         );
         completer.complete(
           BookmarkVisualFingerprint(
-            sha256: fingerprints['sha256']!,
-            differenceHash: fingerprints['dhash'],
+            sha256: fingerprints['sha256']! as String,
+            differenceHash: fingerprints['dhash'] as String?,
+            regionDifferenceHashes: _parseBookmarkVisualRegionHashes(
+              fingerprints['regionDhashes'],
+            ),
           ),
         );
       } catch (error, stackTrace) {
@@ -228,15 +231,108 @@ class FlutterBookmarkVisualFingerprintComputer
   }
 }
 
-Map<String, String?> _computeBookmarkVisualFingerprints(Uint8List bytes) =>
-    <String, String?>{
-      'sha256': computeImageSha256(bytes),
-      'dhash': tryComputeDifferenceHash(
-        bytes,
-        maximumDecodedPixels: maximumBookmarkFingerprintPixels,
-        maximumEncodedBytes: _maximumBookmarkFingerprintBytes,
+Map<BookmarkVisualRegion, String> _parseBookmarkVisualRegionHashes(
+  Object? value,
+) {
+  if (value is! Map) return const <BookmarkVisualRegion, String>{};
+  final hashes = <BookmarkVisualRegion, String>{};
+  for (final entry in value.entries) {
+    final name = entry.key;
+    final hash = entry.value;
+    if (name is! String || hash is! String || !isValidDifferenceHash(hash)) {
+      continue;
+    }
+    for (final region in BookmarkVisualRegion.values) {
+      if (region.name == name) {
+        hashes[region] = hash;
+        break;
+      }
+    }
+  }
+  return hashes;
+}
+
+Map<String, Object?> _computeBookmarkVisualFingerprints(Uint8List bytes) {
+  final sha256 = computeImageSha256(bytes);
+  if (bytes.isEmpty || bytes.length > maximumReverseImageInputBytes) {
+    return <String, Object?>{
+      'sha256': sha256,
+      'dhash': null,
+      'regionDhashes': const <String, String>{},
+    };
+  }
+
+  try {
+    final decoder = image.findDecoderForData(bytes);
+    final info = decoder?.startDecode(bytes);
+    if (decoder == null ||
+        info == null ||
+        info.width <= 0 ||
+        info.height <= 0 ||
+        info.width > maximumBookmarkFingerprintPixels ~/ info.height) {
+      return <String, Object?>{
+        'sha256': sha256,
+        'dhash': null,
+        'regionDhashes': const <String, String>{},
+      };
+    }
+    final decoded = decoder.decodeFrame(0);
+    if (decoded == null) {
+      return <String, Object?>{
+        'sha256': sha256,
+        'dhash': null,
+        'regionDhashes': const <String, String>{},
+      };
+    }
+    final oriented =
+        decoded.exif.imageIfd.hasOrientation &&
+            decoded.exif.imageIfd.orientation != 1
+        ? image.bakeOrientation(decoded)
+        : decoded;
+    final width = oriented.width;
+    final height = oriented.height;
+    // Both halves keep the centre row on odd-height images. Because height is
+    // already positive, this stays in the closed integer range [1, height]
+    // without num.clamp widening the static type away from int.
+    final halfHeight = (height + 1) ~/ 2;
+
+    String hashRegion({
+      required int x,
+      required int y,
+      required int width,
+      required int height,
+    }) => computeDifferenceHashFromImage(
+      image.copyCrop(oriented, x: x, y: y, width: width, height: height),
+    );
+
+    final hashes = <String, String>{
+      BookmarkVisualRegion.full.name: computeDifferenceHashFromImage(oriented),
+      BookmarkVisualRegion.top.name: hashRegion(
+        x: 0,
+        y: 0,
+        width: width,
+        height: halfHeight,
+      ),
+      BookmarkVisualRegion.bottom.name: hashRegion(
+        x: 0,
+        y: height - halfHeight,
+        width: width,
+        height: halfHeight,
       ),
     };
+    return <String, Object?>{
+      'sha256': sha256,
+      'dhash': hashes[BookmarkVisualRegion.full.name],
+      'regionDhashes': hashes,
+    };
+  } on Object {
+    return <String, Object?>{
+      'sha256': sha256,
+      'dhash': null,
+      'regionDhashes': const <String, String>{},
+    };
+  }
+}
 
 class DownloadIdentityBookmarkVisualSink implements BookmarkVisualIdentitySink {
   final DownloadIdentityIndex index;
@@ -408,7 +504,7 @@ class PixivBookmarkVisualSearchController {
 }
 
 Uint8List? _buildBookmarkCandidatePreview(Uint8List bytes) {
-  if (bytes.isEmpty || bytes.length > _maximumBookmarkFingerprintBytes) {
+  if (bytes.isEmpty || bytes.length > maximumReverseImageInputBytes) {
     return null;
   }
   try {
