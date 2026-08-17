@@ -122,14 +122,11 @@ void main() {
           final value = top
               ? (x * 255 ~/ (source.width - 1))
               : ((source.width - 1 - x) * 255 ~/ (source.width - 1));
-          source.setPixelRgba(
-            x,
-            y,
-            value,
-            top ? (255 - value) : value,
-            top ? value : (255 - value),
-            255,
-          );
+          // dHash compares horizontal luminance. Make the upper half strictly
+          // increase and the lower half strictly decrease so the whole-image
+          // hash is deliberately different from the upper-half query, while
+          // the candidate's upper-region hash remains an exact match.
+          source.setPixelRgb(x, y, value, value, value);
         }
       }
       final query = image.copyCrop(
