@@ -27,15 +27,19 @@ class IqdbSearchProvider implements ReverseImageSearchProvider {
 
   IqdbSearchProvider({
     Dio? dio,
+    ExternalSearchDioClient? externalSearchClient,
     NetworkMode networkMode = NetworkMode.standard,
     NetworkMode Function()? networkModeProvider,
     this.totalTimeout = defaultTotalTimeout,
   }) : assert(totalTimeout > Duration.zero),
-       _dioClient = ExternalSearchDioClient(
-         baseUrl: 'https://safe.iqdb.org',
-         networkModeProvider: networkModeProvider ?? () => networkMode,
-         injectedDio: dio,
-       );
+       assert(dio == null || externalSearchClient == null),
+       _dioClient =
+           externalSearchClient ??
+           ExternalSearchDioClient(
+             baseUrl: 'https://safe.iqdb.org',
+             networkModeProvider: networkModeProvider ?? () => networkMode,
+             injectedDio: dio,
+           );
 
   @override
   String get id => 'iqdb';
@@ -54,43 +58,60 @@ class IqdbSearchProvider implements ReverseImageSearchProvider {
       );
     }
 
-    final form = FormData();
-    for (final serviceId in _safeServiceIds) {
-      form.fields.add(MapEntry('service[]', serviceId));
-    }
-    form.files.add(
-      MapEntry(
-        'file',
-        MultipartFile.fromBytes(
-          query.bytes,
-          filename: 'pixez_reverse_search.${query.extension}',
-        ),
-      ),
-    );
-
     final activeCancelToken = cancelToken ?? CancelToken();
+    final stopwatch = Stopwatch()..start();
+    var deadlineExpired = false;
+
+    TimeoutException totalTimeoutError() {
+      deadlineExpired = true;
+      // The provider owns this total deadline. Callers that need other
+      // providers to keep running must pass a dedicated IQDB token, as
+      // SauceStore does.
+      if (!activeCancelToken.isCancelled) {
+        activeCancelToken.cancel('IQDB total timeout');
+      }
+      return TimeoutException('IQDB total timeout', totalTimeout);
+    }
 
     try {
-      final response = await _dioClient.run(
-        (dio) => dio
-            .post<dynamic>('/', data: form, cancelToken: activeCancelToken)
-            .timeout(
-              totalTimeout,
-              onTimeout: () {
-                if (activeCancelToken.isCancelled) {
-                  throw DioException(
-                    requestOptions: RequestOptions(path: '/'),
-                    type: DioExceptionType.cancel,
-                    error: 'IQDB search cancelled',
-                  );
-                }
-                // The deadline owns this request token. Callers that need to
-                // keep other providers alive must pass a dedicated IQDB token.
-                activeCancelToken.cancel('IQDB total timeout');
-                throw TimeoutException('IQDB total timeout', totalTimeout);
-              },
-            ),
-      );
+      final response = await _dioClient
+          .runWithTlsFallback((dio) {
+            if (activeCancelToken.isCancelled) {
+              if (deadlineExpired) throw totalTimeoutError();
+              throw _cancelledRequest(activeCancelToken);
+            }
+            final remaining = totalTimeout - stopwatch.elapsed;
+            if (remaining <= Duration.zero) {
+              throw totalTimeoutError();
+            }
+            // A FormData/MultipartFile is single-use once Dio finalizes it.
+            // The callback is invoked again for the alternate trust channel,
+            // so every attempt must start from the immutable query bytes.
+            return dio
+                .post<dynamic>(
+                  '/',
+                  data: _buildFormData(query),
+                  cancelToken: activeCancelToken,
+                )
+                .timeout(
+                  remaining,
+                  onTimeout: () {
+                    if (activeCancelToken.isCancelled && !deadlineExpired) {
+                      throw _cancelledRequest(activeCancelToken);
+                    }
+                    throw totalTimeoutError();
+                  },
+                );
+          })
+          .timeout(
+            totalTimeout,
+            onTimeout: () {
+              if (activeCancelToken.isCancelled && !deadlineExpired) {
+                throw _cancelledRequest(activeCancelToken);
+              }
+              throw totalTimeoutError();
+            },
+          );
       final html = switch (response.data) {
         String value => value,
         List<int> value => utf8.decode(value, allowMalformed: true),
@@ -107,6 +128,11 @@ class IqdbSearchProvider implements ReverseImageSearchProvider {
       );
     } on DioException catch (error) {
       if (CancelToken.isCancel(error)) {
+        if (deadlineExpired) {
+          return ReverseImageProviderResponse(
+            serviceMessage: 'IQDB timed out after ${totalTimeout.inSeconds}s',
+          );
+        }
         return const ReverseImageProviderResponse(
           serviceMessage: 'IQDB search cancelled',
         );
@@ -120,4 +146,29 @@ class IqdbSearchProvider implements ReverseImageSearchProvider {
   }
 
   void close() => _dioClient.close();
+}
+
+FormData _buildFormData(ReverseImageQuery query) {
+  final form = FormData();
+  for (final serviceId in IqdbSearchProvider._safeServiceIds) {
+    form.fields.add(MapEntry('service[]', serviceId));
+  }
+  form.files.add(
+    MapEntry(
+      'file',
+      MultipartFile.fromBytes(
+        query.bytes,
+        filename: 'pixez_reverse_search.${query.extension}',
+      ),
+    ),
+  );
+  return form;
+}
+
+DioException _cancelledRequest(CancelToken cancelToken) {
+  return DioException(
+    requestOptions: RequestOptions(path: '/'),
+    type: DioExceptionType.cancel,
+    error: cancelToken.cancelError ?? 'IQDB search cancelled',
+  );
 }

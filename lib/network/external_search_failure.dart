@@ -3,6 +3,23 @@ import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:rhttp/rhttp.dart';
 
+/// Whether [error] is the one transport failure allowed to change trust
+/// channels.
+///
+/// A fallback is intentionally narrower than the user-facing TLS diagnostic:
+/// only rhttp's typed invalid-certificate exception qualifies. Cancellation,
+/// deadlines, HTTP responses, Dart IO handshake failures and connection-error
+/// strings must never cause the request to be replayed.
+bool isExternalSearchInvalidCertificateFailure(Object error) {
+  if (error is! DioException ||
+      error.response != null ||
+      error.type == DioExceptionType.cancel ||
+      _isTimeoutType(error.type)) {
+    return false;
+  }
+  return _unwrapRhttpCause(error.error) is RhttpInvalidCertificateException;
+}
+
 /// Converts transport failures into useful but privacy-safe diagnostics.
 ///
 /// Raw exception messages are deliberately not returned because they can
@@ -17,9 +34,10 @@ String describeExternalSearchFailure(String provider, DioException error) {
 
   final cause = _unwrapRhttpCause(error.error);
   if (cause is RhttpTimeoutException) return '$provider: timeout';
-  if (cause is RhttpInvalidCertificateException || cause is TlsException) {
+  if (cause is RhttpInvalidCertificateException) {
     return '$provider: TLS verification failed';
   }
+  if (cause is TlsException) return '$provider: TLS handshake failed';
   if (cause is SocketException) {
     return _classifiedConnectionMessage(provider, cause.message);
   }
@@ -36,7 +54,8 @@ String describeExternalSearchFailure(String provider, DioException error) {
 bool _isTimeoutType(DioExceptionType type) {
   return type == DioExceptionType.connectionTimeout ||
       type == DioExceptionType.sendTimeout ||
-      type == DioExceptionType.receiveTimeout;
+      type == DioExceptionType.receiveTimeout ||
+      type == DioExceptionType.transformTimeout;
 }
 
 Object? _unwrapRhttpCause(Object? cause) {
@@ -58,7 +77,7 @@ String _classifiedConnectionMessage(String provider, String rawMessage) {
       message.contains('handshake') ||
       message.contains('tls') ||
       message.contains('ssl')) {
-    return '$provider: TLS verification failed';
+    return '$provider: TLS handshake failed';
   }
   if (message.contains('timed out') || message.contains('timeout')) {
     return '$provider: timeout';

@@ -4,6 +4,29 @@ import 'package:pixez/er/hoster.dart';
 import 'package:pixez/network/network_mode.dart';
 import 'package:rhttp/rhttp.dart' as r;
 
+/// A fully verified trust implementation used by an external HTTPS provider.
+///
+/// These channels differ only in where their trusted roots and certificate
+/// path implementation come from. Certificate and hostname verification are
+/// never disabled.
+enum ExternalTlsTrustChannel { webpki, platform, androidSecurityContext }
+
+/// Ordered trust channels allowed for one exact external-service host.
+class ExternalTlsHostPlan {
+  const ExternalTlsHostPlan({
+    required this.primary,
+    this.invalidCertificateFallbacks = const <ExternalTlsTrustChannel>[],
+  });
+
+  final ExternalTlsTrustChannel primary;
+  final List<ExternalTlsTrustChannel> invalidCertificateFallbacks;
+
+  Iterable<ExternalTlsTrustChannel> get channels sync* {
+    yield primary;
+    yield* invalidCertificateFallbacks;
+  }
+}
+
 class PixezNetworkSettings {
   static const appApiHost = 'app-api.pixiv.net';
   static const oauthHost = 'oauth.secure.pixiv.net';
@@ -46,12 +69,58 @@ class PixezNetworkSettings {
   /// External hosts must never inherit Pixiv's static DNS overrides. ECH is
   /// therefore opportunistic here: providers that do not publish ECH
   /// configuration can still use the normal verified TLS path.
-  static r.ClientSettings forExternalService(NetworkMode mode) {
+  static r.ClientSettings forExternalService(
+    NetworkMode mode, {
+    ExternalTlsTrustChannel trustChannel = ExternalTlsTrustChannel.webpki,
+  }) {
+    if (trustChannel == ExternalTlsTrustChannel.androidSecurityContext) {
+      throw ArgumentError.value(
+        trustChannel,
+        'trustChannel',
+        'Dart IO trust is not an rhttp client setting',
+      );
+    }
     return r.ClientSettings(
+      throwOnStatusCode: false,
       enableEch: mode == NetworkMode.ech,
       requireEch: false,
-      tlsSettings: _verifiedExternalTlsSettings(),
+      redirectSettings: const r.RedirectSettings.none(),
+      tlsSettings: _verifiedExternalTlsSettings(trustChannel),
     );
+  }
+
+  /// Returns the only trust-channel sequence allowed for [host].
+  ///
+  /// Android gets narrow, typed-certificate fallbacks for the two known
+  /// reverse-image providers. Every other host and every non-Android platform
+  /// remains WebPKI-only. The Dart IO channel is deliberately restricted to
+  /// these two hosts because it exists to bypass the Android verifier
+  /// regression in the vendored rustls platform-verifier path, not as a
+  /// general trust fallback.
+  static ExternalTlsHostPlan externalTlsHostPlan(
+    String host, {
+    bool? isAndroid,
+  }) {
+    const webpkiOnly = ExternalTlsHostPlan(
+      primary: ExternalTlsTrustChannel.webpki,
+    );
+    if (!(isAndroid ?? Platform.isAndroid)) return webpkiOnly;
+
+    return switch (host.toLowerCase()) {
+      'saucenao.com' => const ExternalTlsHostPlan(
+        primary: ExternalTlsTrustChannel.webpki,
+        invalidCertificateFallbacks: <ExternalTlsTrustChannel>[
+          ExternalTlsTrustChannel.androidSecurityContext,
+        ],
+      ),
+      'safe.iqdb.org' => const ExternalTlsHostPlan(
+        primary: ExternalTlsTrustChannel.webpki,
+        invalidCertificateFallbacks: <ExternalTlsTrustChannel>[
+          ExternalTlsTrustChannel.androidSecurityContext,
+        ],
+      ),
+      _ => webpkiOnly,
+    };
   }
 
   static r.ClientSettings compatible() {
@@ -80,13 +149,18 @@ class PixezNetworkSettings {
     );
   }
 
-  /// External services follow Android's trusted system roots. This keeps
-  /// their certificate-chain compatibility aligned with the platform browser
-  /// without weakening hostname or certificate verification.
-  static r.TlsSettings _verifiedExternalTlsSettings() {
+  static r.TlsSettings _verifiedExternalTlsSettings(
+    ExternalTlsTrustChannel trustChannel,
+  ) {
     return r.TlsSettings(
       verifyCertificates: true,
-      rootCertSource: r.RootCertSource.platform,
+      rootCertSource: switch (trustChannel) {
+        ExternalTlsTrustChannel.webpki => r.RootCertSource.webpki,
+        ExternalTlsTrustChannel.platform => r.RootCertSource.platform,
+        ExternalTlsTrustChannel.androidSecurityContext => throw StateError(
+          'Dart IO trust cannot be converted to rhttp TLS',
+        ),
+      },
       sni: true,
     );
   }

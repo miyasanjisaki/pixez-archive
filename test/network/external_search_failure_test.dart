@@ -81,6 +81,95 @@ void main() {
     );
   });
 
+  test(
+    'fallback predicate accepts only typed invalid-certificate failures',
+    () {
+      final request = HttpRequest(url: 'https://secret.example/search');
+      final certificate = RhttpInvalidCertificateException(
+        request: request,
+        message: 'certificate rejected',
+      );
+
+      expect(
+        isExternalSearchInvalidCertificateFailure(
+          _error(cause: _wrapped(certificate)),
+        ),
+        isTrue,
+      );
+      expect(
+        isExternalSearchInvalidCertificateFailure(certificate),
+        isFalse,
+        reason: 'only a Dio transport failure may authorize a replay',
+      );
+      expect(
+        isExternalSearchInvalidCertificateFailure(
+          _error(
+            cause: _wrapped(
+              RhttpConnectionException(
+                request,
+                'TLS handshake or certificate verification failed',
+              ),
+            ),
+          ),
+        ),
+        isFalse,
+        reason: 'error-message text must not authorize a replay',
+      );
+      expect(
+        isExternalSearchInvalidCertificateFailure(
+          _error(type: DioExceptionType.receiveTimeout, cause: certificate),
+        ),
+        isFalse,
+      );
+      expect(
+        isExternalSearchInvalidCertificateFailure(
+          _error(type: DioExceptionType.cancel, cause: certificate),
+        ),
+        isFalse,
+      );
+      expect(
+        isExternalSearchInvalidCertificateFailure(
+          _error(cause: certificate, status: 502),
+        ),
+        isFalse,
+        reason: 'an HTTP response must never change trust channels',
+      );
+    },
+  );
+
+  test('generic TLS wording never authorizes a replay', () {
+    final request = HttpRequest(url: 'https://secret.example/search');
+    final cause = RhttpConnectionException(
+      request,
+      'TLS handshake failed via 192.0.2.10 for secret.example',
+    );
+    final error = _error(cause: _wrapped(cause));
+
+    final message = describeExternalSearchFailure('IQDB', error);
+    expect(message, 'IQDB: TLS handshake failed');
+    expect(isExternalSearchInvalidCertificateFailure(error), isFalse);
+    expect(message, isNot(contains('secret.example')));
+    expect(message, isNot(contains('192.0.2.10')));
+  });
+
+  test('transform timeout is reported as timeout and never replayed', () {
+    final request = HttpRequest(url: 'https://secret.example/search');
+    final certificate = RhttpInvalidCertificateException(
+      request: request,
+      message: 'certificate rejected for secret.example',
+    );
+    final error = _error(
+      type: DioExceptionType.transformTimeout,
+      cause: _wrapped(certificate),
+    );
+
+    expect(
+      describeExternalSearchFailure('SauceNAO', error),
+      'SauceNAO: timeout',
+    );
+    expect(isExternalSearchInvalidCertificateFailure(error), isFalse);
+  });
+
   test('classifies socket failures without returning raw OS details', () {
     const cause = SocketException(
       'Connection refused by 127.0.0.1:8080',

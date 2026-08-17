@@ -47,6 +47,111 @@ import 'package:pixez/utils/saucenao_result_parser.dart';
 
 part 'sauce_store.g.dart';
 
+const Duration _sauceNaoRequestBudget = Duration(seconds: 45);
+
+/// Creates a fresh multipart body for one SauceNAO transport attempt.
+///
+/// Dio multipart bodies are single-use after they have been finalized. TLS
+/// fallback therefore must call this function again instead of replaying a
+/// previously submitted [FormData] or [MultipartFile].
+@visibleForTesting
+FormData buildSauceNaoSearchFormData({
+  required Uint8List bytes,
+  required String extension,
+  required bool pixivOnly,
+}) {
+  return FormData.fromMap(<String, dynamic>{
+    if (pixivOnly) 'dbs[]': '5' else 'db': '999',
+    'file': MultipartFile.fromBytes(
+      bytes,
+      filename: 'pixez_reverse_search.$extension',
+    ),
+  });
+}
+
+/// Executes one logical SauceNAO database request.
+///
+/// The transport may make a second TLS attempt, but both attempts share the
+/// same cancellation token and one wall-clock budget. Response parsing happens
+/// only after transport fallback has finished, so parser failures are never
+/// replayed as network requests.
+@visibleForTesting
+Future<SauceNaoPixivResults> executeSauceNaoSearchRequest({
+  required ExternalSearchDioClient client,
+  required Uint8List bytes,
+  required String extension,
+  required bool pixivOnly,
+  required CancelToken cancelToken,
+  Duration requestBudget = _sauceNaoRequestBudget,
+}) async {
+  final requestCancelToken = CancelToken();
+  var requestActive = true;
+  if (cancelToken.isCancelled) {
+    requestCancelToken.cancel('SauceNAO search cancelled');
+  } else {
+    unawaited(
+      cancelToken.whenCancel.then<void>((_) {
+        if (requestActive && !requestCancelToken.isCancelled) {
+          requestCancelToken.cancel('SauceNAO search cancelled');
+        }
+      }),
+    );
+  }
+
+  late final Response<dynamic> response;
+  try {
+    response = await client
+        .runWithTlsFallback(
+          (dio) => dio.post<dynamic>(
+            '/search.php',
+            // runWithTlsFallback can invoke this callback once per verified
+            // trust channel. Multipart objects are deliberately rebuilt from
+            // the immutable source bytes for every attempt.
+            data: buildSauceNaoSearchFormData(
+              bytes: bytes,
+              extension: extension,
+              pixivOnly: pixivOnly,
+            ),
+            cancelToken: requestCancelToken,
+          ),
+        )
+        .timeout(
+          requestBudget,
+          onTimeout: () {
+            if (cancelToken.isCancelled) {
+              if (!requestCancelToken.isCancelled) {
+                requestCancelToken.cancel('SauceNAO search cancelled');
+              }
+              throw DioException(
+                requestOptions: RequestOptions(path: '/search.php'),
+                type: DioExceptionType.cancel,
+                error: 'SauceNAO search cancelled',
+              );
+            }
+            // A provider deadline aborts only the active SauceNAO request.
+            // It must not cancel IQDB or turn the whole session into a
+            // user-cancelled result.
+            if (!requestCancelToken.isCancelled) {
+              requestCancelToken.cancel('SauceNAO total timeout');
+            }
+            throw DioException(
+              requestOptions: RequestOptions(path: '/search.php'),
+              type: DioExceptionType.receiveTimeout,
+              error: 'SauceNAO total timeout',
+            );
+          },
+        );
+  } finally {
+    requestActive = false;
+  }
+  final responseHtml = switch (response.data) {
+    String value => value,
+    List<int> value => utf8.decode(value, allowMalformed: true),
+    _ => response.data.toString(),
+  };
+  return parseSauceNaoPixivResults(responseHtml);
+}
+
 enum SauceSearchPhase {
   idle,
   picking,
@@ -1379,28 +1484,13 @@ abstract class SauceStoreBase with Store {
     String extension, {
     required bool pixivOnly,
     required CancelToken cancelToken,
-  }) async {
-    final form = <String, dynamic>{
-      if (pixivOnly) 'dbs[]': '5' else 'db': '999',
-      'file': MultipartFile.fromBytes(
-        bytes,
-        filename: 'pixez_reverse_search.$extension',
-      ),
-    };
-    final response = await _sauceDioClient.run(
-      (dio) => dio.post<dynamic>(
-        '/search.php',
-        data: FormData.fromMap(form),
-        cancelToken: cancelToken,
-      ),
-    );
-    final responseHtml = switch (response.data) {
-      String value => value,
-      List<int> value => utf8.decode(value, allowMalformed: true),
-      _ => response.data.toString(),
-    };
-    return parseSauceNaoPixivResults(responseHtml);
-  }
+  }) => executeSauceNaoSearchRequest(
+    client: _sauceDioClient,
+    bytes: bytes,
+    extension: extension,
+    pixivOnly: pixivOnly,
+    cancelToken: cancelToken,
+  );
 
   Future<_ExternalSearchBatch> _searchExternalProviders(
     Uint8List bytes,
