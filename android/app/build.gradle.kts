@@ -82,8 +82,8 @@ android {
         applicationId = packageName
         minSdk = flutter.minSdkVersion
         targetSdk = 37
-        versionCode = 10010062
-        versionName = "0.9.117 X"
+        versionCode = 10010063
+        versionName = "0.9.118 X"
         buildConfigField("boolean", "IS_GOOGLEPLAY", isGooglePlay.toString())
         ndk {
             abiFilters.addAll(arrayOf("armeabi-v7a", "arm64-v8a", "x86_64"))

@@ -66,9 +66,12 @@ class PixezNetworkSettings {
   /// Network settings for third-party HTTPS services such as reverse-image
   /// search providers.
   ///
-  /// External hosts must never inherit Pixiv's static DNS overrides. ECH is
-  /// therefore opportunistic here: providers that do not publish ECH
-  /// configuration can still use the normal verified TLS path.
+  /// External hosts must never inherit Pixiv's static DNS or ECH bootstrap.
+  ///
+  /// The vendored ECH lookup is intentionally Pixiv-specific, so enabling it
+  /// for unrelated providers can present the wrong ECH configuration and can
+  /// also force TLS 1.3 against a TLS 1.2-only service. External providers use
+  /// their normal, fully verified TLS negotiation instead.
   static r.ClientSettings forExternalService(
     NetworkMode mode, {
     ExternalTlsTrustChannel trustChannel = ExternalTlsTrustChannel.webpki,
@@ -82,7 +85,7 @@ class PixezNetworkSettings {
     }
     return r.ClientSettings(
       throwOnStatusCode: false,
-      enableEch: mode == NetworkMode.ech,
+      enableEch: false,
       requireEch: false,
       redirectSettings: const r.RedirectSettings.none(),
       tlsSettings: _verifiedExternalTlsSettings(trustChannel),

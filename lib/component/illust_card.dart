@@ -19,6 +19,7 @@ import 'dart:io';
 import 'package:bot_toast/bot_toast.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_mobx/flutter_mobx.dart';
+import 'package:pixez/component/illust_stats_badge.dart';
 import 'package:pixez/component/null_hero.dart';
 import 'package:pixez/component/pixiv_image.dart';
 import 'package:pixez/component/star_icon.dart';
@@ -262,7 +263,10 @@ class _IllustCardState extends State<IllustCard> {
                     Positioned(
                       left: 8,
                       bottom: 8,
-                      child: _buildStatsBadge(context),
+                      child: IllustStatsBadge(
+                        bookmarks: store.illusts!.totalBookmarks,
+                        views: store.illusts!.totalView,
+                      ),
                     ),
                   // Positioned(
                   //   top: 0,
@@ -319,52 +323,6 @@ class _IllustCardState extends State<IllustCard> {
         child: Text("AI", style: TextStyle(color: Colors.white)),
       ),
     );
-  }
-
-  Widget _buildStatsBadge(BuildContext context) {
-    final illust = store.illusts!;
-    final bookmarks = _compactCount(illust.totalBookmarks);
-    final views = _compactCount(illust.totalView);
-    return Semantics(
-      label:
-          '${I18n.of(context).total_bookmark}: ${illust.totalBookmarks}, '
-          '${I18n.of(context).total_view}: ${illust.totalView}',
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
-        decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.72),
-          borderRadius: BorderRadius.circular(9),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.bookmark, size: 13, color: Colors.white),
-            const SizedBox(width: 3),
-            Text(
-              bookmarks,
-              style: const TextStyle(color: Colors.white, fontSize: 11),
-            ),
-            const SizedBox(width: 7),
-            const Icon(Icons.visibility, size: 13, color: Colors.white),
-            const SizedBox(width: 3),
-            Text(
-              views,
-              style: const TextStyle(color: Colors.white, fontSize: 11),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  String _compactCount(int value) {
-    if (value >= 1000000) {
-      return '${(value / 1000000).toStringAsFixed(value >= 10000000 ? 0 : 1)}M';
-    }
-    if (value >= 1000) {
-      return '${(value / 1000).toStringAsFixed(value >= 10000 ? 0 : 1)}K';
-    }
-    return '$value';
   }
 
   Widget _buildAnimationWraper(BuildContext context, Widget child) {

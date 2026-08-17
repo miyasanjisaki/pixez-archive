@@ -178,6 +178,7 @@ class _RecomSpolightPageState extends State<RecomSpolightPage>
                 lightingStore: _lightingStore,
                 store: _lightingStore.iStores[index],
                 iStores: _lightingStore.iStores,
+                showStats: true,
               );
             }, childCount: _lightingStore.iStores.length),
           )

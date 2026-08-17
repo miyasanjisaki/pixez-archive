@@ -195,6 +195,7 @@ class _RecomSpolightPageState extends State<RecomSpolightPage>
                 lightingStore: _lightingStore,
                 store: visibleStores[index],
                 iStores: visibleStores,
+                showStats: true,
                 iStoresProvider: () => _lightingStore.iStores
                     .where((element) => element.illusts?.hateByUser() == false)
                     .toList(growable: false),

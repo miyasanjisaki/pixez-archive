@@ -20,6 +20,7 @@ import 'package:bot_toast/bot_toast.dart';
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter_mobx/flutter_mobx.dart';
 import 'package:pixez/clipboard_plugin.dart';
+import 'package:pixez/component/illust_stats_badge.dart';
 import 'package:pixez/component/null_hero.dart';
 import 'package:pixez/component/star_icon.dart';
 import 'package:pixez/constants.dart';
@@ -271,6 +272,15 @@ class _IllustCardState extends State<IllustCard> {
                     ],
                   ),
                 ),
+                if (widget.showStats)
+                  Positioned(
+                    left: 8,
+                    bottom: 8,
+                    child: IllustStatsBadge(
+                      bookmarks: store.illusts!.totalBookmarks,
+                      views: store.illusts!.totalView,
+                    ),
+                  ),
               ],
             ),
           ),
@@ -386,16 +396,6 @@ class _IllustCardState extends State<IllustCard> {
                   style: FluentTheme.of(context).typography.body,
                   strutStyle: StrutStyle(forceStrutHeight: true, leading: 0),
                 ),
-                if (widget.showStats)
-                  Text(
-                    '${I18n.of(context).total_bookmark} '
-                    '${_compactCount(store.illusts!.totalBookmarks)} · '
-                    '${I18n.of(context).total_view} '
-                    '${_compactCount(store.illusts!.totalView)}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: FluentTheme.of(context).typography.caption,
-                  ),
               ],
             ),
           ),
@@ -440,15 +440,5 @@ class _IllustCardState extends State<IllustCard> {
         ),
       ),
     );
-  }
-
-  String _compactCount(int value) {
-    if (value >= 1000000) {
-      return '${(value / 1000000).toStringAsFixed(value >= 10000000 ? 0 : 1)}M';
-    }
-    if (value >= 1000) {
-      return '${(value / 1000).toStringAsFixed(value >= 10000 ? 0 : 1)}K';
-    }
-    return '$value';
   }
 }

@@ -73,18 +73,12 @@ void main() {
     );
   });
 
-  test('ECH is opportunistic only in external ECH mode', () {
-    expect(
-      PixezNetworkSettings.forExternalService(NetworkMode.standard).enableEch,
-      isFalse,
-    );
-    expect(
-      PixezNetworkSettings.forExternalService(NetworkMode.compat).enableEch,
-      isFalse,
-    );
-    final ech = PixezNetworkSettings.forExternalService(NetworkMode.ech);
-    expect(ech.enableEch, isTrue);
-    expect(ech.requireEch, isFalse);
+  test('external services never inherit Pixiv ECH bootstrap', () {
+    for (final mode in NetworkMode.values) {
+      final settings = PixezNetworkSettings.forExternalService(mode);
+      expect(settings.enableEch, isFalse, reason: '$mode');
+      expect(settings.requireEch, isFalse, reason: '$mode');
+    }
   });
 
   test('external trust channels do not change Pixiv TLS policy', () {
@@ -96,6 +90,8 @@ void main() {
 
     expect(pixivCompat.tlsSettings?.rootCertSource, r.RootCertSource.webpki);
     expect(pixivEch?.tlsSettings?.rootCertSource, r.RootCertSource.webpki);
+    expect(pixivEch?.enableEch, isTrue);
+    expect(pixivEch?.requireEch, isTrue);
   });
 
   test('copyWith adds timeouts without losing strict transport settings', () {
@@ -116,7 +112,7 @@ void main() {
       expect(tls?.sni, isTrue, reason: '$mode');
       expect(tls?.trustedRootCertificates, isEmpty, reason: '$mode');
       expect(settings.dnsSettings, isNull, reason: '$mode');
-      expect(settings.enableEch, mode == NetworkMode.ech, reason: '$mode');
+      expect(settings.enableEch, isFalse, reason: '$mode');
       expect(settings.requireEch, isFalse, reason: '$mode');
       expect(settings.throwOnStatusCode, isFalse, reason: '$mode');
       expect(settings.redirectSettings, same(const r.RedirectSettings.none()));
