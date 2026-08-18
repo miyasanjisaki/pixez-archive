@@ -65,6 +65,11 @@ bool isTrustedAscii2dUri(Uri? uri) {
   return host == 'ascii2d.net' || host == 'www.ascii2d.net';
 }
 
+bool isAscii2dUploadPageUri(Uri? uri) {
+  if (!isTrustedAscii2dUri(uri)) return false;
+  return uri!.path.isEmpty || uri.path == '/' || uri.path == '/search/file';
+}
+
 int? pixivArtworkIdFromUri(Uri? uri) {
   if (uri == null || (uri.scheme != 'https' && uri.scheme != 'http')) {
     return null;

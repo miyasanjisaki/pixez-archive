@@ -73,11 +73,11 @@ void main() {
   });
 
   group('planReverseImageProbeLayout', () {
-    test('places an existing top half without cropping any source pixel', () {
+    test('keeps full-image geometry and bounds large outputs', () {
       final layout = planReverseImageProbeLayout(
-        640,
-        360,
-        ReverseImageProbeKind.inputTopHalf,
+        3000,
+        2000,
+        ReverseImageProbeKind.full,
       );
 
       expect(layout.preservesWholeInput, isTrue);
@@ -88,98 +88,42 @@ void main() {
           layout.source.width,
           layout.source.height,
         ],
-        [0, 0, 640, 360],
+        [0, 0, 3000, 2000],
       );
-      expect([layout.canvasWidth, layout.canvasHeight], [640, 720]);
+      expect([layout.canvasWidth, layout.canvasHeight], [3000, 2000]);
       expect([layout.destinationX, layout.destinationY], [0, 0]);
-      expect([layout.outputWidth, layout.outputHeight], [640, 720]);
+      expect([layout.outputWidth, layout.outputHeight], [1600, 1067]);
       expect(
         [layout.outputContentWidth, layout.outputContentHeight],
-        [640, 360],
+        [1600, 1067],
       );
       expect([layout.outputDestinationX, layout.outputDestinationY], [0, 0]);
     });
 
-    test('places an existing bottom half in the lower canvas half', () {
+    test('keeps subject crops distinct from the full image', () {
       final layout = planReverseImageProbeLayout(
-        640,
-        360,
-        ReverseImageProbeKind.inputBottomHalf,
-      );
-
-      expect(layout.preservesWholeInput, isTrue);
-      expect(
-        [layout.source.width, layout.source.height],
-        [640, 360],
-        reason: 'the half-image action must not enter the 70% crop path',
-      );
-      expect(layout.destinationY, 360);
-      expect(layout.outputDestinationY, 360);
-      expect(
-        layout.outputDestinationY + layout.outputContentHeight,
-        layout.outputHeight,
-      );
-    });
-
-    test('keeps subject crop semantics separate from half-image padding', () {
-      final crop = planReverseImageProbeLayout(
         640,
         360,
         ReverseImageProbeKind.top,
       );
-      final half = planReverseImageProbeLayout(
-        640,
-        360,
-        ReverseImageProbeKind.inputTopHalf,
-      );
 
-      expect(crop.source.height, 252);
-      expect(crop.canvasHeight, 252);
-      expect(crop.preservesWholeInput, isFalse);
-      expect(half.source.height, 360);
-      expect(half.canvasHeight, 720);
+      expect(layout.preservesWholeInput, isFalse);
+      expect([layout.source.x, layout.source.y], [0, 0]);
+      expect([layout.source.width, layout.source.height], [640, 252]);
+      expect([layout.canvasWidth, layout.canvasHeight], [640, 252]);
+      expect([layout.outputWidth, layout.outputHeight], [640, 252]);
     });
 
-    test('bounds the composed output before a canvas is allocated', () {
-      final bottom = planReverseImageProbeLayout(
-        3000,
-        2000,
-        ReverseImageProbeKind.inputBottomHalf,
-      );
-      final extreme = planReverseImageProbeLayout(
-        100000,
-        1,
-        ReverseImageProbeKind.inputTopHalf,
-      );
-
-      expect([bottom.outputWidth, bottom.outputHeight], [1200, 1600]);
+    test('rejects invalid dimensions and output bounds', () {
       expect(
-        [bottom.outputContentWidth, bottom.outputContentHeight],
-        [1200, 800],
+        () => planReverseImageProbeLayout(0, 100, ReverseImageProbeKind.full),
+        throwsArgumentError,
       );
-      expect(bottom.outputDestinationY, 800);
-      for (final layout in [bottom, extreme]) {
-        expect(layout.outputWidth, inInclusiveRange(1, 1600));
-        expect(layout.outputHeight, inInclusiveRange(2, 1600));
-        expect(layout.outputDestinationX, greaterThanOrEqualTo(0));
-        expect(layout.outputDestinationY, greaterThanOrEqualTo(0));
-        expect(
-          layout.outputDestinationX + layout.outputContentWidth,
-          lessThanOrEqualTo(layout.outputWidth),
-        );
-        expect(
-          layout.outputDestinationY + layout.outputContentHeight,
-          lessThanOrEqualTo(layout.outputHeight),
-        );
-      }
-    });
-
-    test('rejects dimensions that cannot represent both canvas halves', () {
       expect(
         () => planReverseImageProbeLayout(
           100,
           100,
-          ReverseImageProbeKind.inputTopHalf,
+          ReverseImageProbeKind.full,
           maximumOutputDimension: 1,
         ),
         throwsArgumentError,

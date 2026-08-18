@@ -38,11 +38,28 @@ Future<BookmarkSearchChoice> showBookmarkSearchChoiceDialog(
   final chinese = Localizations.localeOf(context).languageCode == 'zh';
   final title = chinese ? '先在我的收藏中查找？' : 'Search my bookmarks first?';
   final message = chinese
-      ? '本地没有找到这张图的来源。可以先下载当前 Pixiv 账号的公开和非公开收藏预览图，在手机上做视觉比对。选中的图片不会上传给第三方，但扫描大量收藏会使用网络流量。'
+      ? '本地无法找到这张图的来源。可以先下载当前Pixiv账号的公开和非公开收藏预览图，在手机上做视觉比对。'
       : 'No local source was found. PixEz can download previews from the '
             'currently selected account\'s public and private bookmarks and '
-            'compare them on this device. The selected image is not uploaded '
-            'to a third party, but a large bookmark scan uses bandwidth.';
+            'compare them on this device.';
+  final warning = chinese
+      ? '注意：扫描大量收藏会使用网络流量！'
+      : 'Warning: scanning many bookmarks uses network data.';
+  Widget content(BuildContext dialogContext) => Column(
+    mainAxisSize: MainAxisSize.min,
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(message),
+      const SizedBox(height: 12),
+      Text(
+        warning,
+        style: TextStyle(
+          color: Theme.of(dialogContext).colorScheme.error,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    ],
+  );
 
   if (Platform.isWindows) {
     return await fluent.showDialog<BookmarkSearchChoice>(
@@ -50,7 +67,7 @@ Future<BookmarkSearchChoice> showBookmarkSearchChoiceDialog(
           barrierDismissible: false,
           builder: (dialogContext) => fluent.ContentDialog(
             title: Text(title),
-            content: Text(message),
+            content: content(dialogContext),
             actions: [
               fluent.Button(
                 onPressed: () => Navigator.of(
@@ -81,7 +98,7 @@ Future<BookmarkSearchChoice> showBookmarkSearchChoiceDialog(
         barrierDismissible: false,
         builder: (dialogContext) => AlertDialog(
           title: Text(title),
-          content: Text(message),
+          content: content(dialogContext),
           actions: [
             TextButton(
               onPressed: () =>

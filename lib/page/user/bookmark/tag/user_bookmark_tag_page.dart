@@ -206,7 +206,7 @@ class _NewWidgetState extends State<NewWidget> {
       builder: (_) {
         return EasyRefresh(
           controller: _easyRefreshController,
-          refreshOnStart: true,
+          refreshOnStart: false,
           header: PixezDefault.header(context),
           footer: PixezDefault.footer(context),
           child: ListView(
@@ -226,6 +226,13 @@ class _NewWidgetState extends State<NewWidget> {
                   }); //日语
                 },
               ),
+              if (_bookMarkTagStore.bookmarkTags.isEmpty &&
+                  _bookMarkTagStore.fetchFailed.value)
+                ListTile(
+                  leading: const Icon(Icons.refresh),
+                  title: Text(I18n.of(context).loading_failed_retry_message),
+                  onTap: () => _bookMarkTagStore.fetch(restrict),
+                ),
               for (var bookmarkTag in _bookMarkTagStore.bookmarkTags)
                 ListTile(
                   title: Text(bookmarkTag.name),

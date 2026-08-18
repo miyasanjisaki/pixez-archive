@@ -365,5 +365,5 @@
   "novel_views": "Reads",
   "novel_likes": "Likes",
   "reverse_image_external_title": "Continue with external image search?",
-  "reverse_image_external_message": "PixEz could not identify a Pixiv ID locally. Continue only if you agree to send separate resized, metadata-free copies to SauceNAO and IQDB at the same time. Both third-party services can still see the visible picture content. An additional region is sent only when you explicitly choose that region."
+  "reverse_image_external_message": "PixEz could not identify a Pixiv artwork ID locally. Allow a compressed copy to be submitted to SauceNAO and IQDB?"
 }

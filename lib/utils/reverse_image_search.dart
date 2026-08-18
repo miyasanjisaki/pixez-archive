@@ -25,25 +25,8 @@ bool isReverseImageReportedByteLengthAllowed(int byteLength) =>
 /// A provider-independent query transformation.
 ///
 /// [center], [left], [right], [top] and [bottom] crop the selected input to a
-/// subject region. [inputTopHalf] and [inputBottomHalf] have deliberately
-/// different semantics: the selected input is already a half image, so every
-/// source pixel is retained and the missing half is represented by padding.
-enum ReverseImageProbeKind {
-  full,
-  center,
-  left,
-  right,
-  top,
-  bottom,
-  inputTopHalf,
-  inputBottomHalf,
-}
-
-extension ReverseImageProbeKindProperties on ReverseImageProbeKind {
-  bool get isHalfImageInput =>
-      this == ReverseImageProbeKind.inputTopHalf ||
-      this == ReverseImageProbeKind.inputBottomHalf;
-}
+/// subject region.
+enum ReverseImageProbeKind { full, center, left, right, top, bottom }
 
 class ReverseImageProbeRegion {
   final ReverseImageProbeKind kind;
@@ -66,8 +49,7 @@ class ReverseImageProbeRegion {
 /// The source rectangle is expressed in selected-image pixels. Canvas and
 /// destination coordinates describe the logical pre-resize composition, while
 /// the output fields describe the bounded JPEG dimensions actually allocated.
-/// Keeping this planning separate makes it testable that half-image probes do
-/// not accidentally pass through the crop path.
+/// Keeping this planning separate makes crop bounds testable without decoding.
 class ReverseImageProbeLayout {
   final ReverseImageProbeKind kind;
   final ReverseImageProbeRegion source;
@@ -97,16 +79,10 @@ class ReverseImageProbeLayout {
     required this.outputDestinationY,
   });
 
-  bool get preservesWholeInput =>
-      kind == ReverseImageProbeKind.full || kind.isHalfImageInput;
+  bool get preservesWholeInput => kind == ReverseImageProbeKind.full;
 }
 
-/// Plans either a subject crop or a missing-half canvas without decoding.
-///
-/// A half-image input is placed unchanged in the corresponding half of a
-/// double-height logical canvas. The returned output geometry is already
-/// bounded, so callers can resize the source first and avoid allocating a
-/// potentially 64-megapixel intermediate canvas.
+/// Plans a full-image or subject-crop probe without decoding.
 ReverseImageProbeLayout planReverseImageProbeLayout(
   int width,
   int height,
@@ -124,30 +100,12 @@ ReverseImageProbeLayout planReverseImageProbeLayout(
     );
   }
 
-  late final ReverseImageProbeRegion source;
-  late final int canvasWidth;
-  late final int canvasHeight;
-  late final int destinationY;
-  if (kind.isHalfImageInput) {
-    source = ReverseImageProbeRegion(
-      kind: kind,
-      x: 0,
-      y: 0,
-      width: width,
-      height: height,
-    );
-    canvasWidth = width;
-    canvasHeight = height * 2;
-    destinationY = kind == ReverseImageProbeKind.inputTopHalf ? 0 : height;
-  } else {
-    source = planReverseImageProbeRegions(
-      width,
-      height,
-    ).singleWhere((region) => region.kind == kind);
-    canvasWidth = source.width;
-    canvasHeight = source.height;
-    destinationY = 0;
-  }
+  final source = planReverseImageProbeRegions(
+    width,
+    height,
+  ).singleWhere((region) => region.kind == kind);
+  final canvasWidth = source.width;
+  final canvasHeight = source.height;
 
   final longestSide = canvasWidth > canvasHeight ? canvasWidth : canvasHeight;
   int bounded(int dimension) => longestSide <= maximumOutputDimension
@@ -158,22 +116,9 @@ ReverseImageProbeLayout planReverseImageProbeLayout(
             .toInt();
 
   final outputWidth = bounded(canvasWidth);
-  var outputHeight = bounded(canvasHeight);
-  if (kind.isHalfImageInput && outputHeight < 2) {
-    // Both the supplied and missing halves must remain represented even for an
-    // extremely wide input. Two pixels is still within the declared bound.
-    outputHeight = 2;
-  }
-  final outputContentWidth = kind.isHalfImageInput
-      ? outputWidth
-      : bounded(source.width);
-  final outputContentHeight = kind.isHalfImageInput
-      ? (outputHeight / 2).round().clamp(1, outputHeight - 1).toInt()
-      : bounded(source.height);
-  final outputDestinationY = switch (kind) {
-    ReverseImageProbeKind.inputBottomHalf => outputHeight - outputContentHeight,
-    _ => 0,
-  };
+  final outputHeight = bounded(canvasHeight);
+  final outputContentWidth = bounded(source.width);
+  final outputContentHeight = bounded(source.height);
 
   return ReverseImageProbeLayout(
     kind: kind,
@@ -181,13 +126,13 @@ ReverseImageProbeLayout planReverseImageProbeLayout(
     canvasWidth: canvasWidth,
     canvasHeight: canvasHeight,
     destinationX: 0,
-    destinationY: destinationY,
+    destinationY: 0,
     outputWidth: outputWidth,
     outputHeight: outputHeight,
     outputContentWidth: outputContentWidth,
     outputContentHeight: outputContentHeight,
     outputDestinationX: 0,
-    outputDestinationY: outputDestinationY,
+    outputDestinationY: 0,
   );
 }
 

@@ -1282,7 +1282,7 @@ abstract class SauceStoreBase with Store {
       phase.value = SauceSearchPhase.parsing;
       // Provider diagnostics describe the latest probe. Keep accumulated
       // candidates, but do not leave a stale timeout/TLS warning visible after
-      // a later region or half-image retry succeeds.
+      // a later region retry succeeds.
       _replaceServiceMessages(const <String>[]);
       final batch = await _searchExternalProviders(
         cropBytes,
@@ -1414,13 +1414,11 @@ abstract class SauceStoreBase with Store {
             content: Text(
               chinese
                   ? '${hasCandidates ? '当前候选会保留。' : 'SauceNAO 和 IQDB 未找到可靠候选。'}'
-                        '可以在 Ascii2D 官方网页继续：完整图用「色合搜索」，裁剪图或局部图用「特征搜索」。只有你在下一页再次点击「使用这张图」后，去除元数据的副本才会交给 Ascii2D。'
+                        '可以在Ascii2D官方网页继续搜索（完整图用「色合搜索」，裁剪图或局部图用「特征搜索」）。是否继续？'
                   : '${hasCandidates ? 'The current candidates will remain. ' : 'SauceNAO and IQDB found no reliable candidate. '}'
                         'Continue on the official Ascii2D page: use color '
                         'search for a complete image and feature search for a '
-                        'crop or partial image. The metadata-free copy is '
-                        'handed to Ascii2D only after you tap Use this image '
-                        'again.',
+                        'crop or partial image. Continue?',
             ),
             actions: [
               TextButton(
@@ -2008,19 +2006,15 @@ abstract class SauceStoreBase with Store {
     final isChinese = Localizations.localeOf(context).languageCode == 'zh';
     final title = isChinese ? '尝试一次变换识图？' : 'Retry with one probe?';
     final message = isChinese
-        ? '全图没有找到候选。可以裁出一个保留主体的区域；如果输入本来就是原图的上半或下半，请选择对应的“输入是半图”，它会保留全部现有像素而不会再次裁剪。每次只提交你点选的一个去除元数据副本。'
-        : 'No full-image candidate was found. Choose a subject crop, or choose '
-              'the matching half-image action when the input is already the '
-              'top or bottom half. Half-image probes retain every supplied '
-              'pixel. Only the one probe you choose is submitted.';
+        ? '全图没有找到候选。可以裁出一个保留主体的区域。每次只提交你点选的一个去除元数据副本。'
+        : 'No full-image candidate was found. Choose one subject crop. Only '
+              'the metadata-free probe you select is submitted.';
     const options = [
       ReverseImageProbeKind.center,
       ReverseImageProbeKind.left,
       ReverseImageProbeKind.right,
       ReverseImageProbeKind.top,
       ReverseImageProbeKind.bottom,
-      ReverseImageProbeKind.inputTopHalf,
-      ReverseImageProbeKind.inputBottomHalf,
     ];
     String label(ReverseImageProbeKind value) {
       if (!isChinese) return _probeEnglishLabel(value);
@@ -2030,8 +2024,6 @@ abstract class SauceStoreBase with Store {
         ReverseImageProbeKind.right => '右侧',
         ReverseImageProbeKind.top => '上方',
         ReverseImageProbeKind.bottom => '下方',
-        ReverseImageProbeKind.inputTopHalf => '输入是上半图（缺下半）',
-        ReverseImageProbeKind.inputBottomHalf => '输入是下半图（缺上半）',
         ReverseImageProbeKind.full => '全图',
       };
     }
@@ -2083,11 +2075,7 @@ abstract class SauceStoreBase with Store {
               ...options.map(
                 (option) => ListTile(
                   title: Text(label(option)),
-                  trailing: Icon(
-                    option.isHalfImageInput
-                        ? Icons.vertical_align_center
-                        : Icons.crop,
-                  ),
+                  trailing: const Icon(Icons.crop),
                   onTap: () => Navigator.of(dialogContext).pop(option),
                 ),
               ),
@@ -2413,15 +2401,13 @@ Map<String, Object>? _prepareExternalSearchCrop(Map<String, Object> request) {
     probe,
     maximumOutputDimension: SauceStoreBase._maxSearchDimension,
   );
-  var content = probe.isHalfImageInput
-      ? oriented
-      : img.copyCrop(
-          oriented,
-          x: layout.source.x,
-          y: layout.source.y,
-          width: layout.source.width,
-          height: layout.source.height,
-        );
+  var content = img.copyCrop(
+    oriented,
+    x: layout.source.x,
+    y: layout.source.y,
+    width: layout.source.width,
+    height: layout.source.height,
+  );
   if (content.width != layout.outputContentWidth ||
       content.height != layout.outputContentHeight) {
     content = img.copyResize(
@@ -2431,26 +2417,7 @@ Map<String, Object>? _prepareExternalSearchCrop(Map<String, Object> request) {
     );
   }
 
-  final img.Image prepared;
-  if (probe.isHalfImageInput) {
-    prepared = img.Image(
-      width: layout.outputWidth,
-      height: layout.outputHeight,
-      numChannels: 3,
-    );
-    // Use a flat color sampled from the cut boundary. It is less likely to add
-    // false local features than mirroring or stretching the edge, while its
-    // adapted tone avoids a harsh black/white seam dominating global matching.
-    img.fill(prepared, color: _halfProbePaddingColor(oriented, probe));
-    img.compositeImage(
-      prepared,
-      content,
-      dstX: layout.outputDestinationX,
-      dstY: layout.outputDestinationY,
-    );
-  } else {
-    prepared = content;
-  }
+  final prepared = content;
   prepared.exif = img.ExifData();
   prepared.iccProfile = null;
   prepared.textData = null;
@@ -2463,7 +2430,7 @@ Map<String, Object>? _prepareExternalSearchCrop(Map<String, Object> request) {
 Map<String, Object>? prepareExternalSearchImageForTesting(Uint8List bytes) =>
     _prepareExternalSearchImage(bytes);
 
-/// Exposes one crop/half-image encoding pass for pixel-level regression tests.
+/// Exposes one crop encoding pass for pixel-level regression tests.
 @visibleForTesting
 Map<String, Object>? prepareExternalSearchProbeForTesting(
   Uint8List bytes,
@@ -2473,33 +2440,6 @@ Map<String, Object>? prepareExternalSearchProbeForTesting(
   'probe': probe.name,
 });
 
-img.ColorRgb8 _halfProbePaddingColor(
-  img.Image image,
-  ReverseImageProbeKind probe,
-) {
-  final rows = image.height < 8 ? image.height : 8;
-  final firstY = probe == ReverseImageProbeKind.inputTopHalf
-      ? image.height - rows
-      : 0;
-  var red = 0.0;
-  var green = 0.0;
-  var blue = 0.0;
-  var count = 0;
-  final xStep = image.width > 512 ? (image.width / 512).ceil() : 1;
-  for (var y = firstY; y < firstY + rows; y++) {
-    for (var x = 0; x < image.width; x += xStep) {
-      final pixel = image.getPixel(x, y);
-      red += pixel.rNormalized.toDouble();
-      green += pixel.gNormalized.toDouble();
-      blue += pixel.bNormalized.toDouble();
-      count++;
-    }
-  }
-  int channel(double sum) =>
-      ((sum / count) * 255).round().clamp(0, 255).toInt();
-  return img.ColorRgb8(channel(red), channel(green), channel(blue));
-}
-
 String _probeEnglishLabel(ReverseImageProbeKind probe) => switch (probe) {
   ReverseImageProbeKind.full => 'full image',
   ReverseImageProbeKind.center => 'center crop',
@@ -2507,8 +2447,6 @@ String _probeEnglishLabel(ReverseImageProbeKind probe) => switch (probe) {
   ReverseImageProbeKind.right => 'right crop',
   ReverseImageProbeKind.top => 'top crop',
   ReverseImageProbeKind.bottom => 'bottom crop',
-  ReverseImageProbeKind.inputTopHalf => 'top-half input (bottom missing)',
-  ReverseImageProbeKind.inputBottomHalf => 'bottom-half input (top missing)',
 };
 
 String? _detectImageExtension(Uint8List bytes) {

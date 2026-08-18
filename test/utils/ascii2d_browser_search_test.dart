@@ -49,6 +49,24 @@ void main() {
     );
   });
 
+  test('automatic loading is limited to official upload pages', () {
+    expect(isAscii2dUploadPageUri(Uri.parse('https://ascii2d.net/')), isTrue);
+    expect(
+      isAscii2dUploadPageUri(Uri.parse('https://ascii2d.net/search/file')),
+      isTrue,
+    );
+    expect(
+      isAscii2dUploadPageUri(
+        Uri.parse('https://ascii2d.net/search/color/abc123'),
+      ),
+      isFalse,
+    );
+    expect(
+      isAscii2dUploadPageUri(Uri.parse('https://ascii2d.net.evil.test/')),
+      isFalse,
+    );
+  });
+
   test('extracts only Pixiv artwork URLs', () {
     expect(
       pixivArtworkIdFromUri(

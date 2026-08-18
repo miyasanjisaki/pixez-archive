@@ -366,5 +366,5 @@
   "novel_views": "閱讀數",
   "novel_likes": "按讚",
   "reverse_image_external_title": "繼續使用外部識圖？",
-  "reverse_image_external_message": "PixEz 無法在本機辨識出 Pixiv 作品 ID。僅在你同意將兩份移除中繼資料並縮小後的副本，同時分別提交給 SauceNAO 與 IQDB 時繼續。兩個第三方服務仍能看到畫面內容。只有你主動點選某個區域時，才會額外提交該區域一次。"
+  "reverse_image_external_message": "PixEz無法在本機辨識出Pixiv作品ID。是否允許將壓縮後的副本提交給SauceNAO與IQDB？"
 }

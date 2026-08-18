@@ -14,11 +14,10 @@ import 'package:webview_flutter_android/webview_flutter_android.dart';
 /// direct reverse-image providers.
 ///
 /// [sanitizedImageBytes] must already be stripped of metadata and reduced to a
-/// suitable upload size. The bytes are only written to app-private temporary
-/// storage after the user explicitly taps "Use this image". Android then hands
-/// that file to Ascii2D's normal HTML file chooser. JavaScript, cookies, and any
-/// challenge pages remain under the site's control; this page does not issue a
-/// direct POST or attempt to bypass a challenge.
+/// suitable upload size. Android hands one app-private temporary file to
+/// Ascii2D's normal HTML file chooser. JavaScript, cookies, and any challenge
+/// pages remain under the site's control; this page does not issue a direct
+/// POST or attempt to bypass a challenge.
 class Ascii2dBrowserSearchPage extends StatefulWidget {
   final Uint8List sanitizedImageBytes;
 
@@ -46,6 +45,8 @@ class _Ascii2dBrowserSearchPageState extends State<Ascii2dBrowserSearchPage> {
   double _progress = 0;
   bool _fileBridgeReady = false;
   bool _imageHandedToPage = false;
+  bool _automaticLoadAttempted = false;
+  bool _automaticLoadInProgress = false;
   String? _preparationError;
 
   @override
@@ -74,6 +75,7 @@ class _Ascii2dBrowserSearchPageState extends State<Ascii2dBrowserSearchPage> {
               _currentUri = uri;
               _progress = 1;
             });
+            unawaited(_tryAutomaticImageLoad());
           },
           onNavigationRequest: _handleNavigation,
         ),
@@ -106,7 +108,10 @@ class _Ascii2dBrowserSearchPageState extends State<Ascii2dBrowserSearchPage> {
         }
         return <String>[file.uri.toString()];
       });
-      if (mounted) setState(() => _fileBridgeReady = true);
+      if (mounted) {
+        setState(() => _fileBridgeReady = true);
+        unawaited(_tryAutomaticImageLoad());
+      }
     } catch (_) {
       // Keep the official page usable. On unsupported WebView builds the user
       // can still use its normal file chooser and reselect the image.
@@ -164,9 +169,27 @@ class _Ascii2dBrowserSearchPageState extends State<Ascii2dBrowserSearchPage> {
     return NavigationDecision.prevent;
   }
 
-  Future<void> _armAndOpenFileChooser() async {
+  Future<void> _tryAutomaticImageLoad() async {
+    if (!mounted ||
+        _automaticLoadAttempted ||
+        _automaticLoadInProgress ||
+        !_fileBridgeReady ||
+        _imageHandedToPage ||
+        !isAscii2dUploadPageUri(_currentUri)) {
+      return;
+    }
+    _automaticLoadAttempted = true;
+    _automaticLoadInProgress = true;
+    try {
+      await _armAndOpenFileChooser(automatic: true);
+    } finally {
+      _automaticLoadInProgress = false;
+    }
+  }
+
+  Future<void> _armAndOpenFileChooser({bool automatic = false}) async {
     if (!isTrustedAscii2dUri(_currentUri)) {
-      _showMessage('请先返回 Ascii2D 页面再上传');
+      if (!automatic) _showMessage('请先返回 Ascii2D 页面再上传');
       return;
     }
     final validation = validateAscii2dUpload(widget.sanitizedImageBytes);
@@ -177,7 +200,7 @@ class _Ascii2dBrowserSearchPageState extends State<Ascii2dBrowserSearchPage> {
     }
     _uploadGate.arm(DateTime.now());
     if (!_fileBridgeReady) {
-      _showMessage('请在网页中点击「画像のパス」并重新选择图片');
+      if (!automatic) _showMessage('请在网页中点击「画像のパス」并重新选择图片');
       return;
     }
     try {
@@ -190,14 +213,16 @@ class _Ascii2dBrowserSearchPageState extends State<Ascii2dBrowserSearchPage> {
   return 'opened';
 })()
 ''');
-      if ('$result'.contains('missing')) {
+      if (!automatic && '$result'.contains('missing')) {
         _showMessage(
           '网页尚无文件框：若正在验证请先正常完成；'
           '若在结果页请点右上角主页',
         );
       }
     } catch (_) {
-      _showMessage('请在网页中点击文件选择框；不会绕过验证页');
+      if (!automatic) {
+        _showMessage('请在网页中点击文件选择框；不会绕过验证页');
+      }
     }
   }
 
@@ -208,6 +233,14 @@ class _Ascii2dBrowserSearchPageState extends State<Ascii2dBrowserSearchPage> {
       return;
     }
     await _controller.loadRequest(target);
+  }
+
+  Future<void> _loadHome() async {
+    setState(() {
+      _automaticLoadAttempted = false;
+      _imageHandedToPage = false;
+    });
+    await _controller.loadRequest(Uri.parse(ascii2dOrigin));
   }
 
   void _showMessage(String message) {
@@ -229,18 +262,13 @@ class _Ascii2dBrowserSearchPageState extends State<Ascii2dBrowserSearchPage> {
 
   @override
   Widget build(BuildContext context) {
-    final colorUri = ascii2dResultModeUri(_currentUri, Ascii2dResultMode.color);
-    final featureUri = ascii2dResultModeUri(
-      _currentUri,
-      Ascii2dResultMode.feature,
-    );
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Ascii2D 识图兜底'),
+        title: const Text('Ascii2D识图'),
         actions: [
           IconButton(
             tooltip: '返回 Ascii2D 首页',
-            onPressed: () => _controller.loadRequest(Uri.parse(ascii2dOrigin)),
+            onPressed: _loadHome,
             icon: const Icon(Icons.home_outlined),
           ),
           IconButton(
@@ -261,9 +289,7 @@ class _Ascii2dBrowserSearchPageState extends State<Ascii2dBrowserSearchPage> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   Text(
-                    '完整图先用色合；裁剪、局部图再用特征。'
-                    '图片只会在你点击下方按钮后交给 Ascii2D 官方网页。'
-                    '出现验证时请在网页正常完成。',
+                    '完整图先用色合；裁剪、局部图再用特征。',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                   const SizedBox(height: 8),
@@ -272,20 +298,16 @@ class _Ascii2dBrowserSearchPageState extends State<Ascii2dBrowserSearchPage> {
                     runSpacing: 8,
                     children: [
                       FilledButton.icon(
-                        onPressed: _armAndOpenFileChooser,
+                        onPressed: () => _armAndOpenFileChooser(),
                         icon: const Icon(Icons.upload_file),
                         label: Text(_imageHandedToPage ? '重新装入这张图' : '使用这张图'),
                       ),
                       OutlinedButton(
-                        onPressed: colorUri == null
-                            ? null
-                            : () => _switchMode(Ascii2dResultMode.color),
+                        onPressed: () => _switchMode(Ascii2dResultMode.color),
                         child: const Text('色合搜索'),
                       ),
                       OutlinedButton(
-                        onPressed: featureUri == null
-                            ? null
-                            : () => _switchMode(Ascii2dResultMode.feature),
+                        onPressed: () => _switchMode(Ascii2dResultMode.feature),
                         child: const Text('特征搜索'),
                       ),
                     ],

@@ -84,33 +84,17 @@ void main() {
     expect(output.exif.imageIfd.hasOrientation, isFalse);
   });
 
-  test('half-image probes keep all content on the requested canvas side', () {
+  test('subject crop probes encode only the requested image region', () {
     final input = _threeBandPng();
     final top = _decodePrepared(
-      prepareExternalSearchProbeForTesting(
-        input,
-        ReverseImageProbeKind.inputTopHalf,
-      ),
-    );
-    final bottom = _decodePrepared(
-      prepareExternalSearchProbeForTesting(
-        input,
-        ReverseImageProbeKind.inputBottomHalf,
-      ),
+      prepareExternalSearchProbeForTesting(input, ReverseImageProbeKind.top),
     );
 
-    expect((top.width, top.height), (60, 60));
-    expect((bottom.width, bottom.height), (60, 60));
+    expect((top.width, top.height), (60, 21));
     _expectDominant(top.getPixel(30, 5), 'red');
     _expectDominant(top.getPixel(30, 15), 'green');
-    _expectDominant(top.getPixel(30, 25), 'blue');
-    _expectDominant(top.getPixel(30, 45), 'blue');
-    _expectDominant(bottom.getPixel(30, 15), 'red');
-    _expectDominant(bottom.getPixel(30, 35), 'red');
-    _expectDominant(bottom.getPixel(30, 45), 'green');
-    _expectDominant(bottom.getPixel(30, 55), 'blue');
+    _expectDominant(top.getPixel(30, 20), 'blue');
     expect(top.exif.imageIfd.hasOrientation, isFalse);
-    expect(bottom.exif.imageIfd.hasOrientation, isFalse);
   });
 
   test('distinguishes the 32 megapixel decode limit from file size', () {

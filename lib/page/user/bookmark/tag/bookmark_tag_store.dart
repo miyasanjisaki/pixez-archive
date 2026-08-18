@@ -27,34 +27,72 @@ abstract class _BookMarkTagStoreBase with Store {
   final EasyRefreshController _controller;
   final int id;
   String? nextUrl;
+  final Observable<bool> fetchFailed = Observable(false);
+  int _generation = 0;
+  bool _loadingNext = false;
+
   _BookMarkTagStoreBase(this.id, this._controller);
+
+  List<BookmarkTag> _deduplicate(Iterable<BookmarkTag> tags) {
+    final byName = <String, BookmarkTag>{};
+    for (final tag in tags) {
+      byName[tag.name] = tag;
+    }
+    return byName.values.toList(growable: false);
+  }
+
   @action
   fetch(String restrict) async {
+    final generation = ++_generation;
     nextUrl = null;
+    fetchFailed.value = false;
+    _loadingNext = false;
+    _controller.resetFooter();
     try {
-      var result =
-          await apiClient.getUserBookmarkTagsIllust(id, restrict: restrict);
+      final result = await apiClient.getUserBookmarkTagsIllust(
+        id,
+        restrict: restrict,
+        force: true,
+      );
+      if (generation != _generation) return;
       nextUrl = result.nextUrl;
       bookmarkTags.clear();
-      bookmarkTags.addAll(result.bookmarkTags);
+      bookmarkTags.addAll(_deduplicate(result.bookmarkTags));
       _controller.finishRefresh(IndicatorResult.success);
-    } catch (e) {
+      _controller.resetFooter();
+    } catch (_) {
+      if (generation != _generation) return;
+      fetchFailed.value = true;
       _controller.finishRefresh(IndicatorResult.fail);
     }
   }
 
   @action
   next() async {
+    if (_loadingNext) return;
     if (nextUrl != null && nextUrl!.isNotEmpty) {
+      final generation = _generation;
+      final requestedUrl = nextUrl!;
+      _loadingNext = true;
       try {
-        final result = await apiClient.getNext(nextUrl!);
-        var r = IllustBookmarkTagsResponse.fromJson(result.data);
+        final result = await apiClient.getNext(requestedUrl);
+        if (generation != _generation) return;
+        final r = IllustBookmarkTagsResponse.fromJson(result.data);
         nextUrl = r.nextUrl;
-        bookmarkTags.addAll(r.bookmarkTags);
+        final mergedTags = _deduplicate([...bookmarkTags, ...r.bookmarkTags]);
+        bookmarkTags
+          ..clear()
+          ..addAll(mergedTags);
         _controller.finishLoad(
-            nextUrl == null ? IndicatorResult.noMore : IndicatorResult.success);
-      } catch (e) {
+          nextUrl == null ? IndicatorResult.noMore : IndicatorResult.success,
+        );
+      } catch (_) {
+        if (generation != _generation) return;
         _controller.finishLoad(IndicatorResult.fail);
+      } finally {
+        if (generation == _generation) {
+          _loadingNext = false;
+        }
       }
     } else {
       _controller.finishLoad(IndicatorResult.noMore);

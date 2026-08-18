@@ -651,10 +651,14 @@ class ApiClient {
   Future<IllustBookmarkTagsResponse> getUserBookmarkTagsIllust(
     int user_id, {
     String restrict = 'public',
+    bool force = false,
   }) async {
     final result = await httpClient.get(
       "/v1/user/bookmark-tags/illust",
       queryParameters: notNullMap({"user_id": user_id, "restrict": restrict}),
+      options: options
+          .copyWith(policy: force ? CachePolicy.refresh : null)
+          .toOptions(),
     );
     return IllustBookmarkTagsResponse.fromJson(result.data);
   }
