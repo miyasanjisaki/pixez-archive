@@ -42,114 +42,107 @@ class _TagForIllustPageState extends State<TagForIllustPage> {
           ),
           Padding(
             padding: EdgeInsets.only(left: 16.0),
-            child: Text((_store.restrict == "public"
-                ? I18n.of(context).public
-                : I18n.of(context).private)),
+            child: Text(
+              (_store.restrict == "public"
+                  ? I18n.of(context).public
+                  : I18n.of(context).private),
+            ),
           ),
-          Text(I18n.of(context).bookmark)
+          Text(I18n.of(context).bookmark),
         ],
       ),
-      content: Observer(builder: (_) {
-        return Padding(
-          padding: EdgeInsets.symmetric(horizontal: 16.0),
-          child: Column(
-            children: <Widget>[
-              TextBox(
-                controller: textEditingController,
-                suffix: IconButton(
-                  icon: Icon(FluentIcons.add),
-                  onPressed: () {
-                    final value = textEditingController.value.text.trim();
-                    if (value.isNotEmpty)
-                      _store.insert(TagsR(isRegistered: true, name: value));
-                    textEditingController.clear();
-                  },
+      content: Observer(
+        builder: (_) {
+          return Padding(
+            padding: EdgeInsets.symmetric(horizontal: 16.0),
+            child: Column(
+              children: <Widget>[
+                TextBox(
+                  controller: textEditingController,
+                  suffix: IconButton(
+                    icon: Icon(FluentIcons.add),
+                    onPressed: () {
+                      final value = textEditingController.value.text.trim();
+                      if (value.isNotEmpty)
+                        _store.insert(TagsR(isRegistered: true, name: value));
+                      textEditingController.clear();
+                    },
+                  ),
                 ),
-              ),
-              _store.checkList.length == 0
-                  ? Padding(
-                      padding: EdgeInsets.only(top: 16.0),
-                      child: Center(
-                        child: ProgressRing(),
-                      ),
-                    )
-                  : Expanded(
-                      child: _store.errorMessage == null
-                          ? ListView.builder(
-                              padding: EdgeInsets.all(2.0).copyWith(
-                                top: 8.0,
-                              ),
-                              itemCount: _store.checkList.length,
-                              itemBuilder: (BuildContext context, int index) {
-                                return Padding(
-                                  padding: EdgeInsets.only(bottom: 8.0),
-                                  child: Checkbox(
-                                    onChanged: (bool? value) {
-                                      _store.check(index, value!);
-                                    },
-                                    content: Text(_store.tags[index].name),
-                                    checked: _store.checkList[index],
-                                  ),
-                                );
-                              },
-                            )
-                          : Container(
-                              child: Container(
-                                child: Column(
-                                  mainAxisSize: MainAxisSize.max,
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  crossAxisAlignment: CrossAxisAlignment.center,
-                                  children: <Widget>[
-                                    Container(
-                                      height: 50,
+                _store.checkList.length == 0
+                    ? Padding(
+                        padding: EdgeInsets.only(top: 16.0),
+                        child: Center(child: ProgressRing()),
+                      )
+                    : Expanded(
+                        child: _store.errorMessage == null
+                            ? ListView.builder(
+                                padding: EdgeInsets.all(2.0).copyWith(top: 8.0),
+                                itemCount: _store.checkList.length,
+                                itemBuilder: (BuildContext context, int index) {
+                                  return Padding(
+                                    padding: EdgeInsets.only(bottom: 8.0),
+                                    child: Checkbox(
+                                      onChanged: (bool? value) {
+                                        _store.check(index, value!);
+                                      },
+                                      content: Text(_store.tags[index].name),
+                                      checked: _store.checkList[index],
                                     ),
-                                    Padding(
-                                      padding: const EdgeInsets.all(8.0),
-                                      child: Text(':(',
-                                          style: FluentTheme.of(context)
-                                              .typography
-                                              .title),
-                                    ),
-                                    HyperlinkButton(
+                                  );
+                                },
+                              )
+                            : Container(
+                                child: Container(
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.max,
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.center,
+                                    children: <Widget>[
+                                      Container(height: 50),
+                                      Padding(
+                                        padding: const EdgeInsets.all(8.0),
+                                        child: Text(
+                                          ':(',
+                                          style: FluentTheme.of(
+                                            context,
+                                          ).typography.title,
+                                        ),
+                                      ),
+                                      HyperlinkButton(
                                         onPressed: () {
                                           _store.fetch();
                                         },
-                                        child: Text(I18n.of(context).retry)),
-                                    Padding(
-                                      padding: const EdgeInsets.all(16.0),
-                                      child: Text('${_store.errorMessage}'),
-                                    )
-                                  ],
+                                        child: Text(I18n.of(context).retry),
+                                      ),
+                                      Padding(
+                                        padding: const EdgeInsets.all(16.0),
+                                        child: Text('${_store.errorMessage}'),
+                                      ),
+                                    ],
+                                  ),
                                 ),
                               ),
-                            ),
-                    ),
-            ],
-          ),
-        );
-      }),
+                      ),
+              ],
+            ),
+          );
+        },
+      ),
       actions: [
-        FilledButton(
-          child: Text(I18n.of(context).ok),
-          onPressed: confirm,
-        ),
+        FilledButton(child: Text(I18n.of(context).ok), onPressed: confirm),
         Button(
           child: Text(I18n.of(context).cancel),
           onPressed: Navigator.of(context).pop,
-        )
+        ),
       ],
     );
   }
 
   confirm() async {
-    final tags = _store.tags;
-    List<String>? tempTags = [];
-    for (int i = 0; i < tags.length; i++) {
-      if (tags[i].isRegistered) {
-        tempTags.add(tags[i].name);
-      }
-    }
-    if (tempTags.length == 0) tempTags = null;
+    List<String>? tempTags = _store.selectedTagNames;
+    if (tempTags.isEmpty) tempTags = null;
     Navigator.of(context).pop({"restrict": _store.restrict, "tags": tempTags});
   }
 }

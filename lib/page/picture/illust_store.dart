@@ -83,8 +83,9 @@ abstract class _IllustStoreBase with Store {
               return;
             }
             try {
-              errorMessage =
-                  ErrorMessage.fromJson(e.response!.data).error.message;
+              errorMessage = ErrorMessage.fromJson(
+                e.response!.data,
+              ).error.message;
             } catch (e) {
               errorMessage = e.toString();
             }
@@ -133,21 +134,29 @@ abstract class _IllustStoreBase with Store {
   }
 
   @action
-  Future<bool> star(
-      {String restrict = 'public',
-      List<String>? tags,
-      bool force = false}) async {
+  Future<bool> star({
+    String restrict = 'public',
+    List<String>? tags,
+    bool force = false,
+  }) async {
     state = 1;
     if (force || !illusts!.isBookmarked) {
       try {
         await apiClient.postLikeIllust(
-            illusts!.id, restrict, tags ?? _autoTagsWhenStar());
+          illusts!.id,
+          restrict,
+          tags ?? _autoTagsWhenStar(),
+        );
         illusts!.isBookmarked = true;
         isBookmark = true;
         state = 2;
         HapticUtil.medium();
         return true;
-      } catch (e) {}
+      } catch (e) {
+        state = illusts!.isBookmarked ? 2 : 0;
+        isBookmark = illusts!.isBookmarked;
+        return false;
+      }
     } else {
       try {
         await apiClient.postUnLikeIllust(illusts!.id);

@@ -18,10 +18,15 @@ import 'dart:async';
 
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter_mobx/flutter_mobx.dart';
+import 'package:pixez/er/fluent_leader.dart';
+import 'package:pixez/fluent/page/search/result_page.dart';
 import 'package:pixez/i18n.dart';
 import 'package:pixez/main.dart';
+import 'package:pixez/models/illust_bookmark_tags_response.dart';
+import 'package:pixez/network/api_client.dart';
 import 'package:pixez/page/hello/ranking/rank_store.dart';
 import 'package:pixez/fluent/page/hello/ranking/ranking_mode/rank_mode_page.dart';
+import 'package:pixez/utils/bookmark_interest_tags.dart';
 
 class RankPage extends StatefulWidget {
   const RankPage({super.key});
@@ -49,6 +54,10 @@ class _RankPageState extends State<RankPage>
   late DateTime nowDate;
   late StreamSubscription<String> subscription;
   String? dateTime;
+  List<BookmarkInterestTag> _interestTags = const [];
+  bool _loadingInterestTags = false;
+  bool _interestTagsFailed = false;
+  bool _choiceDialogOpen = false;
 
   GlobalKey appBarKey = GlobalKey();
   ValueNotifier<double?> appBarHeightNotifier = ValueNotifier(null);
@@ -80,6 +89,66 @@ class _RankPageState extends State<RankPage>
         final rankListMean = I18n.of(context).mode_list.split(' ');
         _choicePage(context, rankListMean);
       }
+      _refreshInterestTags();
+    });
+  }
+
+  Future<List<BookmarkTag>> _loadBookmarkTags(int userId, String restrict) {
+    return collectBookmarkTagPages(
+      firstPage: () => apiClient.getUserBookmarkTagsIllust(
+        userId,
+        restrict: restrict,
+        force: true,
+      ),
+      nextPage: (url) async {
+        final response = await apiClient.getNext(url);
+        return IllustBookmarkTagsResponse.fromJson(response.data);
+      },
+    );
+  }
+
+  Future<void> _refreshInterestTags() async {
+    if (_loadingInterestTags) return;
+    if (mounted) {
+      setState(() {
+        _loadingInterestTags = true;
+        _interestTagsFailed = false;
+      });
+    }
+
+    final remoteTags = <BookmarkTag>[];
+    var failed = false;
+    final userId = int.tryParse(accountStore.now?.userId ?? '');
+    if (userId != null) {
+      final pages = await Future.wait(
+        const ['public', 'private'].map((restrict) async {
+          try {
+            return await _loadBookmarkTags(userId, restrict);
+          } catch (_) {
+            failed = true;
+            return <BookmarkTag>[];
+          }
+        }),
+      );
+      for (final page in pages) {
+        remoteTags.addAll(page);
+      }
+    }
+
+    try {
+      await bookTagStore.init();
+    } catch (_) {
+      failed = true;
+    }
+    final merged = mergeBookmarkInterestTags(
+      remoteTags: remoteTags,
+      localTags: bookTagStore.bookTagList,
+    );
+    if (!mounted) return;
+    setState(() {
+      _interestTags = merged;
+      _interestTagsFailed = failed;
+      _loadingInterestTags = false;
     });
   }
 
@@ -186,57 +255,134 @@ class _RankPageState extends State<RankPage>
     );
   }
 
-  void _choicePage(BuildContext context, List<String> rankListMean) {
-    showDialog(
-      context: context,
-      useRootNavigator: false,
-      builder: (context) => ContentDialog(
-        title: Text(I18n.of(context).choice_you_like),
-        content: StatefulBuilder(
-          builder: (context, setState) => SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                for (var value in rankListMean)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8.0,
-                      vertical: 2.0,
+  Future<void> _choicePage(
+    BuildContext pageContext,
+    List<String> rankListMean,
+  ) async {
+    if (_choiceDialogOpen) return;
+    _choiceDialogOpen = true;
+    try {
+      if (_interestTags.isEmpty && !_loadingInterestTags) {
+        await _refreshInterestTags();
+      }
+      if (!pageContext.mounted) return;
+      await showDialog(
+        context: pageContext,
+        useRootNavigator: false,
+        builder: (dialogContext) => ContentDialog(
+          title: Text(I18n.of(dialogContext).choice_you_like),
+          content: StatefulBuilder(
+            builder: (dialogContext, dialogSetState) => SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (var value in rankListMean)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8.0,
+                        vertical: 2.0,
+                      ),
+                      child: Checkbox(
+                        content: Text(value),
+                        checked: _rankFilters.contains(value),
+                        onChanged: (v) {
+                          boolList[rankListMean.indexOf(value)] = v ?? false;
+                          if (v ?? false) {
+                            dialogSetState(() {
+                              _rankFilters.add(value);
+                            });
+                          } else {
+                            dialogSetState(() {
+                              _rankFilters.remove(value);
+                            });
+                          }
+                        },
+                      ),
                     ),
-                    child: Checkbox(
-                      content: Text(value),
-                      checked: _rankFilters.contains(value),
-                      onChanged: (v) {
-                        boolList[rankListMean.indexOf(value)] = v ?? false;
-                        if (v ?? false) {
-                          setState(() {
-                            _rankFilters.add(value);
-                          });
-                        } else {
-                          setState(() {
-                            _rankFilters.remove(value);
-                          });
+                  const Divider(),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          I18n.of(dialogContext).favorited_tag,
+                          style: FluentTheme.of(
+                            dialogContext,
+                          ).typography.subtitle,
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(FluentIcons.refresh),
+                        onPressed: _loadingInterestTags
+                            ? null
+                            : () async {
+                                await _refreshInterestTags();
+                                if (dialogContext.mounted) {
+                                  dialogSetState(() {});
+                                }
+                              },
+                      ),
+                    ],
+                  ),
+                  if (_loadingInterestTags) const ProgressBar(),
+                  if (_interestTagsFailed && _interestTags.isEmpty)
+                    Button(
+                      onPressed: () async {
+                        await _refreshInterestTags();
+                        if (dialogContext.mounted) {
+                          dialogSetState(() {});
                         }
                       },
+                      child: Text(
+                        I18n.of(dialogContext).loading_failed_retry_message,
+                      ),
                     ),
-                  ),
-              ],
+                  if (_interestTags.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          for (final tag in _interestTags)
+                            Button(
+                              child: Text(
+                                tag.count > 0
+                                    ? '${tag.name} · ${tag.count}'
+                                    : tag.name,
+                              ),
+                              onPressed: () {
+                                Navigator.of(dialogContext).pop();
+                                FluentLeader.push(
+                                  pageContext,
+                                  ResultPage(word: tag.name),
+                                  icon: const Icon(FluentIcons.search),
+                                  title: Text(tag.name),
+                                );
+                              },
+                            ),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
             ),
           ),
+          actions: [
+            FilledButton(
+              child: Text(I18n.of(dialogContext).ok),
+              onPressed: () async {
+                await rankStore.saveChange(boolList);
+                rankStore.inChoice = false;
+                Navigator.of(dialogContext).pop();
+              },
+            ),
+          ],
         ),
-        actions: [
-          FilledButton(
-            child: Text(I18n.of(context).ok),
-            onPressed: () async {
-              await rankStore.saveChange(boolList);
-              rankStore.inChoice = false;
-              Navigator.of(context).pop();
-            },
-          ),
-        ],
-      ),
-    );
+      );
+    } finally {
+      _choiceDialogOpen = false;
+    }
   }
 
   List<String> _rankFilters = [];

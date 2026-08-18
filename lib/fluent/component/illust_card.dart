@@ -137,7 +137,14 @@ class _IllustCardState extends State<IllustCard> {
               LPrinter.d(result);
               String restrict = result['restrict'];
               List<String>? tags = result['tags'];
-              store.star(restrict: restrict, tags: tags, force: true);
+              final success = await store.star(
+                restrict: restrict,
+                tags: tags,
+                force: true,
+              );
+              if (!success && context.mounted) {
+                BotToast.showText(text: I18n.of(context).failed);
+              }
             }
           },
         ),

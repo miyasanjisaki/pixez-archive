@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 import 'package:mobx/mobx.dart';
 import 'package:pixez/models/bookmark_detail.dart';
 import 'package:pixez/network/api_client.dart';
+import 'package:pixez/utils/illust_bookmark_tags.dart';
 
 part 'tag_for_illust_store.g.dart';
 
@@ -23,6 +24,17 @@ abstract class _TagForIllustStoreBase with Store {
   ObservableList<bool> checkList = ObservableList();
 
   ObservableList<TagsR> tags = ObservableList();
+
+  List<String> get selectedTagNames {
+    final selected = <String>[];
+    for (var index = 0; index < tags.length; index++) {
+      if (index < checkList.length && checkList[index]) {
+        selected.add(tags[index].name);
+      }
+    }
+    return normalizeIllustBookmarkTags(selected);
+  }
+
   @action
   setRestrict(bool value) {
     restrict = value ? "public" : "private";
@@ -30,7 +42,14 @@ abstract class _TagForIllustStoreBase with Store {
 
   @action
   insert(TagsR tagsR) {
-    tags.insert(0, tagsR);
+    final name = tagsR.name.trim();
+    if (name.isEmpty) return;
+    final existingIndex = tags.indexWhere((tag) => tag.name.trim() == name);
+    if (existingIndex >= 0) {
+      check(existingIndex, true);
+      return;
+    }
+    tags.insert(0, TagsR(name: name, isRegistered: true));
     checkList.insert(0, true);
   }
 

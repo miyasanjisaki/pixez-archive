@@ -33,6 +33,7 @@ import 'package:pixez/models/tags.dart';
 import 'package:pixez/models/ugoira_metadata_response.dart';
 import 'package:pixez/network/pixez_network_settings.dart';
 import 'package:pixez/network/refresh_token_interceptor.dart';
+import 'package:pixez/utils/illust_bookmark_tags.dart';
 import 'package:pixez/utils/popular_preview_merge.dart';
 import 'package:rhttp/rhttp.dart' as r;
 
@@ -259,27 +260,16 @@ class ApiClient {
     String restrict,
     List<String>? tags,
   ) async {
-    if (tags != null && tags.isNotEmpty) {
-      String tagString = tags.first;
-      for (var i = 1; i < tags.length; i++) {
-        tagString = tagString + ' ' + tags[i].trim();
-      }
-      return httpClient.post(
-        "/v2/illust/bookmark/add",
-        data: notNullMap({
-          "illust_id": illust_id,
-          "restrict": restrict,
-          "tags[]": tagString,
-          //null toString =="null"
-        }),
-        options: Options(contentType: Headers.formUrlEncodedContentType),
-      );
-    } else
-      return httpClient.post(
-        "/v2/illust/bookmark/add",
-        data: notNullMap({"illust_id": illust_id, "restrict": restrict}),
-        options: Options(contentType: Headers.formUrlEncodedContentType),
-      );
+    final encodedTags = encodeIllustBookmarkTags(tags);
+    return httpClient.post(
+      "/v2/illust/bookmark/add",
+      data: notNullMap({
+        "illust_id": illust_id,
+        "restrict": restrict,
+        "tags[]": encodedTags,
+      }),
+      options: Options(contentType: Headers.formUrlEncodedContentType),
+    );
   }
 
   Future<Response> postUnLikeIllust(int illust_id) async {
