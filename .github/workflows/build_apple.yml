@@ -1,0 +1,279 @@
+name: Build Apple
+
+on:
+  pull_request:
+  push:
+    tags:
+      - '*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: apple-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  FLUTTER_VERSION: "3.44.9"
+  RUST_TOOLCHAIN: "1.97.1"
+
+jobs:
+  build-macos:
+    name: Build macOS ARM64 (Unnotarized)
+    runs-on: macos-15
+    timeout-minutes: 90
+
+    steps:
+      - name: 签出仓库
+        uses: actions/checkout@v7
+
+      - name: 初始化 Flutter 3.44.9
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.44.9"
+          channel: stable
+          cache: true
+
+      - name: 固定 CargoKit Rust 工具链
+        shell: pwsh
+        run: |-
+          $ErrorActionPreference = 'Stop'
+
+          @"
+          [toolchain]
+          channel = "$env:RUST_TOOLCHAIN"
+          profile = "minimal"
+          targets = ["aarch64-apple-darwin"]
+          "@ | Set-Content -LiteralPath 'rust-toolchain.toml' -Encoding UTF8
+
+      - name: 初始化 Rust 工具链
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: true
+          rustflags: ""
+
+      - name: 验证构建环境
+        shell: pwsh
+        run: |-
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+
+          if ((uname -m).Trim() -ne 'arm64') {
+            throw 'The macOS release job must run on an ARM64 runner.'
+          }
+          flutter --version
+          rustc --version --verbose
+          xcodebuild -version
+
+      - name: 还原依赖
+        shell: pwsh
+        run: |-
+          $ErrorActionPreference = 'Stop'
+          flutter pub get --no-example --enforce-lockfile
+
+      - name: 生成代码 (rhttp)
+        shell: pwsh
+        working-directory: plugins/rhttp/rhttp
+        run: |-
+          $ErrorActionPreference = 'Stop'
+          dart run build_runner build
+
+      - name: 生成代码 (PixEz)
+        shell: pwsh
+        run: |-
+          $ErrorActionPreference = 'Stop'
+          dart run build_runner build
+
+      - name: 构建 macOS ARM64 Release
+        shell: pwsh
+        run: |-
+          $ErrorActionPreference = 'Stop'
+          flutter build macos --release --no-pub
+
+      - name: 打包 macOS 应用
+        shell: pwsh
+        run: |-
+          $ErrorActionPreference = 'Stop'
+
+          $app = Join-Path $PWD 'build/macos/Build/Products/Release/pixez_flutter.app'
+          if (-not (Test-Path -LiteralPath $app -PathType Container)) {
+            throw "macOS application was not produced: $app"
+          }
+
+          $assets = Join-Path $PWD 'release-assets'
+          New-Item -ItemType Directory -Path $assets -Force | Out-Null
+          $archive = Join-Path $assets 'pixez-macos-arm64-unnotarized.zip'
+          & /usr/bin/ditto -c -k --sequesterRsrc --keepParent $app $archive
+          if (-not (Test-Path -LiteralPath $archive -PathType Leaf)) {
+            throw 'macOS archive was not produced.'
+          }
+
+      - name: 上传 macOS ARM64 产物
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-arm64-release-unnotarized
+          path: release-assets/pixez-macos-arm64-unnotarized.zip
+          if-no-files-found: error
+          compression-level: 0
+
+  build-ios:
+    name: Build iOS ARM64 (Unsigned)
+    runs-on: macos-15
+    timeout-minutes: 90
+
+    steps:
+      - name: 签出仓库
+        uses: actions/checkout@v7
+
+      - name: 初始化 Flutter 3.44.9
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.44.9"
+          channel: stable
+          cache: true
+
+      - name: 固定 CargoKit Rust 工具链
+        shell: pwsh
+        run: |-
+          $ErrorActionPreference = 'Stop'
+
+          @"
+          [toolchain]
+          channel = "$env:RUST_TOOLCHAIN"
+          profile = "minimal"
+          targets = ["aarch64-apple-ios"]
+          "@ | Set-Content -LiteralPath 'rust-toolchain.toml' -Encoding UTF8
+
+      - name: 初始化 Rust 工具链
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: true
+          rustflags: ""
+
+      - name: 验证构建环境
+        shell: pwsh
+        run: |-
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+
+          if ((uname -m).Trim() -ne 'arm64') {
+            throw 'The iOS release job must run on an ARM64 runner.'
+          }
+          flutter --version
+          rustc --version --verbose
+          xcodebuild -version
+
+      - name: 还原依赖
+        shell: pwsh
+        run: |-
+          $ErrorActionPreference = 'Stop'
+          flutter pub get --no-example --enforce-lockfile
+
+      - name: 生成代码 (rhttp)
+        shell: pwsh
+        working-directory: plugins/rhttp/rhttp
+        run: |-
+          $ErrorActionPreference = 'Stop'
+          dart run build_runner build
+
+      - name: 生成代码 (PixEz)
+        shell: pwsh
+        run: |-
+          $ErrorActionPreference = 'Stop'
+          dart run build_runner build
+
+      - name: 构建 iOS ARM64 未签名 Release
+        shell: pwsh
+        run: |-
+          $ErrorActionPreference = 'Stop'
+          flutter build ios --release --no-codesign --no-pub
+
+      - name: 打包未签名 IPA
+        shell: pwsh
+        run: |-
+          $ErrorActionPreference = 'Stop'
+
+          $runner = Join-Path $PWD 'build/ios/iphoneos/Runner.app'
+          if (-not (Test-Path -LiteralPath $runner -PathType Container)) {
+            throw "Unsigned iOS application was not produced: $runner"
+          }
+
+          $unsignedRoot = Join-Path $PWD 'build/ios/unsigned'
+          $payload = Join-Path $unsignedRoot 'Payload'
+          $payloadRunner = Join-Path $payload 'Runner.app'
+          New-Item -ItemType Directory -Path $payload -Force | Out-Null
+          Copy-Item -LiteralPath $runner -Destination $payloadRunner -Recurse -Force
+
+          $assets = Join-Path $PWD 'release-assets'
+          New-Item -ItemType Directory -Path $assets -Force | Out-Null
+          $archive = Join-Path $assets 'pixez-ios-arm64-unsigned.ipa'
+          Push-Location $unsignedRoot
+          try {
+            & /usr/bin/ditto -c -k --sequesterRsrc --keepParent 'Payload' $archive
+          } finally {
+            Pop-Location
+          }
+
+          $entries = & /usr/bin/unzip -Z1 $archive
+          if ($entries -notcontains 'Payload/Runner.app/Info.plist') {
+            throw 'Unsigned IPA does not contain Payload/Runner.app/Info.plist.'
+          }
+
+      - name: 上传 iOS ARM64 未签名产物
+        uses: actions/upload-artifact@v7
+        with:
+          name: ios-arm64-release-unsigned
+          path: release-assets/pixez-ios-arm64-unsigned.ipa
+          if-no-files-found: error
+          compression-level: 0
+
+  publish:
+    name: 发布 Apple 产物
+    needs:
+      - build-macos
+      - build-ios
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: 下载 macOS ARM64 产物
+        uses: actions/download-artifact@v8
+        with:
+          name: macos-arm64-release-unnotarized
+          path: release-assets
+
+      - name: 下载 iOS ARM64 未签名产物
+        uses: actions/download-artifact@v8
+        with:
+          name: ios-arm64-release-unsigned
+          path: release-assets
+
+      - name: 生成发布文件名
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |-
+          $ErrorActionPreference = 'Stop'
+
+          if ($env:RELEASE_TAG -notmatch '^[0-9A-Za-z][0-9A-Za-z._-]*$') {
+            throw "Unsupported release tag for an asset filename: $env:RELEASE_TAG"
+          }
+
+          $assets = Join-Path $PWD 'release-assets'
+          Move-Item `
+            -LiteralPath (Join-Path $assets 'pixez-macos-arm64-unnotarized.zip') `
+            -Destination (Join-Path $assets "PixEz-Archive-$env:RELEASE_TAG-macos-arm64-unnotarized.zip")
+          Move-Item `
+            -LiteralPath (Join-Path $assets 'pixez-ios-arm64-unsigned.ipa') `
+            -Destination (Join-Path $assets "PixEz-Archive-$env:RELEASE_TAG-ios-arm64-unsigned.ipa")
+
+      - name: 发布 Apple 资产
+        uses: softprops/action-gh-release@v3
+        with:
+          fail_on_unmatched_files: true
+          files: |-
+            release-assets/PixEz-Archive-${{ github.ref_name }}-macos-arm64-unnotarized.zip
+            release-assets/PixEz-Archive-${{ github.ref_name }}-ios-arm64-unsigned.ipa

@@ -119,21 +119,14 @@ void main() {
     () async {
       final bytes = Uint8List.fromList(const <int>[0, 1, 2, 3, 254, 255]);
 
-      final first = buildSauceNaoSearchFormData(
-        bytes: bytes,
-        extension: 'png',
-        pixivOnly: true,
-      );
+      final first = buildSauceNaoSearchFormData(bytes: bytes, extension: 'png');
       final second = buildSauceNaoSearchFormData(
         bytes: bytes,
         extension: 'png',
-        pixivOnly: true,
       );
 
       expect(second, isNot(same(first)));
-      expect(Map<String, String>.fromEntries(first.fields), const {
-        'dbs[]': '5',
-      });
+      expect(Map<String, String>.fromEntries(first.fields), isEmpty);
       expect(
         Map<String, String>.fromEntries(second.fields),
         Map<String, String>.fromEntries(first.fields),
@@ -185,7 +178,6 @@ void main() {
       client: client,
       bytes: fileBytes,
       extension: 'png',
-      pixivOnly: true,
       cancelToken: CancelToken(),
     );
 
@@ -199,11 +191,8 @@ void main() {
       expect(adapter.requestCount, 1, reason: channel.name);
       expect(adapter.bodies, hasLength(1), reason: channel.name);
       final body = adapter.bodies.single;
-      expect(
-        _containsBytes(body, 'name="dbs[]"'.codeUnits),
-        isTrue,
-        reason: channel.name,
-      );
+      expect(_containsBytes(body, 'name="dbs[]"'.codeUnits), isFalse);
+      expect(_containsBytes(body, 'name="db"'.codeUnits), isFalse);
       expect(
         _containsBytes(body, 'filename="pixez_reverse_search.png"'.codeUnits),
         isTrue,
@@ -213,14 +202,13 @@ void main() {
     }
   });
 
-  test('all-index attempt uses db=999 without the Pixiv-only field', () {
+  test('default request does not override SauceNAO database selection', () {
     final form = buildSauceNaoSearchFormData(
       bytes: Uint8List.fromList(const <int>[1, 2, 3]),
       extension: 'jpg',
-      pixivOnly: false,
     );
 
-    expect(Map<String, String>.fromEntries(form.fields), const {'db': '999'});
+    expect(Map<String, String>.fromEntries(form.fields), isEmpty);
     expect(form.files.single.value.filename, 'pixez_reverse_search.jpg');
   });
 
@@ -257,7 +245,6 @@ void main() {
           client: client,
           bytes: Uint8List.fromList(const <int>[0xff, 0xd8, 0xff, 0xd9]),
           extension: 'jpg',
-          pixivOnly: true,
           cancelToken: CancelToken(),
         ),
         throwsA(
@@ -293,7 +280,6 @@ void main() {
         client: client,
         bytes: Uint8List.fromList(const <int>[0xff, 0xd8, 0xff, 0xd9]),
         extension: 'jpg',
-        pixivOnly: true,
         cancelToken: cancelToken,
         requestBudget: const Duration(milliseconds: 30),
       ),
@@ -338,7 +324,6 @@ void main() {
         client: client,
         bytes: Uint8List.fromList(const <int>[0xff, 0xd8, 0xff, 0xd9]),
         extension: 'jpg',
-        pixivOnly: true,
         cancelToken: cancelToken,
         requestBudget: const Duration(seconds: 2),
       );
@@ -384,7 +369,6 @@ void main() {
         client: client,
         bytes: Uint8List.fromList(const <int>[0xff, 0xd8, 0xff, 0xd9]),
         extension: 'jpg',
-        pixivOnly: true,
         cancelToken: CancelToken(),
       ),
       throwsA(isA<SauceNaoResponseException>()),

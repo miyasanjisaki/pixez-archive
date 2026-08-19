@@ -58,10 +58,8 @@ const Duration _sauceNaoRequestBudget = Duration(seconds: 45);
 FormData buildSauceNaoSearchFormData({
   required Uint8List bytes,
   required String extension,
-  required bool pixivOnly,
 }) {
   return FormData.fromMap(<String, dynamic>{
-    if (pixivOnly) 'dbs[]': '5' else 'db': '999',
     'file': MultipartFile.fromBytes(
       bytes,
       filename: 'pixez_reverse_search.$extension',
@@ -69,7 +67,7 @@ FormData buildSauceNaoSearchFormData({
   });
 }
 
-/// Executes one logical SauceNAO database request.
+/// Executes one logical SauceNAO request using the service's default indexes.
 ///
 /// The transport may make a second TLS attempt, but both attempts share the
 /// same cancellation token and one wall-clock budget. Response parsing happens
@@ -80,7 +78,6 @@ Future<SauceNaoPixivResults> executeSauceNaoSearchRequest({
   required ExternalSearchDioClient client,
   required Uint8List bytes,
   required String extension,
-  required bool pixivOnly,
   required CancelToken cancelToken,
   Duration requestBudget = _sauceNaoRequestBudget,
 }) async {
@@ -110,7 +107,6 @@ Future<SauceNaoPixivResults> executeSauceNaoSearchRequest({
             data: buildSauceNaoSearchFormData(
               bytes: bytes,
               extension: extension,
-              pixivOnly: pixivOnly,
             ),
             cancelToken: requestCancelToken,
           ),
@@ -1508,13 +1504,11 @@ abstract class SauceStoreBase with Store {
   Future<SauceNaoPixivResults> _searchSauceNao(
     Uint8List bytes,
     String extension, {
-    required bool pixivOnly,
     required CancelToken cancelToken,
   }) => executeSauceNaoSearchRequest(
     client: _sauceDioClient,
     bytes: bytes,
     extension: extension,
-    pixivOnly: pixivOnly,
     cancelToken: cancelToken,
   );
 
@@ -1530,7 +1524,7 @@ abstract class SauceStoreBase with Store {
     _updateSessionStep(
       ReverseImageSessionStepId.sauceNao,
       ReverseImageSessionStepState.running,
-      detail: 'Searching the Pixiv index',
+      detail: 'Searching SauceNAO indexes',
     );
     _updateSessionStep(
       ReverseImageSessionStepId.iqdb,
@@ -1538,10 +1532,9 @@ abstract class SauceStoreBase with Store {
       detail: 'Searching IQDB indexes',
     );
 
-    // SauceNAO and IQDB are independent services. Running the IQDB request in
-    // parallel with SauceNAO's db5 -> conditional db999 chain preserves the
-    // same request count and confidence rules while removing one full network
-    // timeout from the critical path.
+    // SauceNAO and IQDB are independent services. Run one default-index
+    // SauceNAO request in parallel with IQDB so a slow provider does not hide
+    // evidence already returned by the other provider.
     Future<_ExternalSearchBatch> recordWhenReady(
       Future<_ExternalSearchBatch> future,
     ) async {
@@ -1589,15 +1582,12 @@ abstract class SauceStoreBase with Store {
     final hits = <ReverseImageProviderHit>[];
     final messages = <String>[];
     var successfulProviders = 0;
-    var searchedAllIndexes = false;
-    var allIndexesCompleted = false;
 
     SauceNaoPixivResults? sauceResults;
     try {
       sauceResults = await _searchSauceNao(
         bytes,
         extension,
-        pixivOnly: true,
         cancelToken: cancelToken,
       );
       successfulProviders++;
@@ -1614,63 +1604,6 @@ abstract class SauceStoreBase with Store {
       const message = 'SauceNAO returned an unsupported response';
       messages.add(message);
       LPrinter.d('$message: $error\n$stackTrace');
-    }
-
-    final fallbackDecision = sauceResults == null
-        ? null
-        : decideSauceNaoAllIndexFallback(sauceResults);
-    if (!cancelToken.isCancelled &&
-        sauceResults != null &&
-        fallbackDecision != null &&
-        fallbackDecision.shouldSearchAllIndexes) {
-      searchedAllIndexes = true;
-      final fallbackDetail = switch (fallbackDecision.reason) {
-        SauceNaoAllIndexFallbackReason.noHighConfidencePixivMatch =>
-          'Pixiv result was below high confidence; searching all indexes',
-        SauceNaoAllIndexFallbackReason.ambiguousPixivMatch =>
-          'Pixiv result was not clearly ahead; searching all indexes',
-        SauceNaoAllIndexFallbackReason.decisivePixivMatch =>
-          'Searching all indexes',
-      };
-      _updateSessionStep(
-        ReverseImageSessionStepId.sauceNao,
-        ReverseImageSessionStepState.running,
-        detail: fallbackDetail,
-      );
-      LPrinter.d(
-        'SauceNAO db5 did not return a decisive Pixiv match '
-        '(${fallbackDecision.reason.name}); trying db999',
-      );
-      try {
-        final allDatabaseResults = await _searchSauceNao(
-          bytes,
-          extension,
-          pixivOnly: false,
-          cancelToken: cancelToken,
-        );
-        sauceResults = mergeSauceNaoPixivResults(
-          sauceResults,
-          allDatabaseResults,
-        );
-        allIndexesCompleted = true;
-      } on SauceNaoResponseException catch (error) {
-        // Keep the valid Pixiv-index candidates. A failed broad fallback is a
-        // partial provider failure, not a reason to discard earlier evidence.
-        messages.add(error.message);
-        LPrinter.d(
-          'SauceNAO all-database fallback unavailable: ${error.message}',
-        );
-      } on DioException catch (error) {
-        if (!CancelToken.isCancel(error)) {
-          final message = _dioMessage(error);
-          messages.add(message);
-          LPrinter.d('SauceNAO all-database fallback unavailable: $message');
-        }
-      } catch (error, stackTrace) {
-        const message = 'SauceNAO all-database response was unsupported';
-        messages.add(message);
-        LPrinter.d('$message: $error\n$stackTrace');
-      }
     }
 
     if (sauceResults != null) {
@@ -1713,14 +1646,7 @@ abstract class SauceStoreBase with Store {
         ? 'Cancelled by user'
         : successfulProviders == 0
         ? (messages.isEmpty ? 'SauceNAO unavailable' : messages.join(' · '))
-        : searchedAllIndexes
-        ? allIndexesCompleted
-              ? '$sauceResultLabel · '
-                    'Pixiv and all indexes searched'
-              : '$sauceResultLabel · '
-                    'Pixiv results kept; '
-                    'all-index fallback unavailable'
-        : '$sauceResultLabel · decisive Pixiv-index match';
+        : '$sauceResultLabel · SauceNAO indexes searched';
     _updateSessionStep(
       ReverseImageSessionStepId.sauceNao,
       cancelToken.isCancelled
