@@ -17,6 +17,7 @@
 import 'dart:io';
 import 'dart:math';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_displaymode/flutter_displaymode.dart';
 import 'package:mobx/mobx.dart';
@@ -31,8 +32,11 @@ import 'package:pixez/network/api_client.dart';
 import 'package:pixez/network/network_mode.dart';
 import 'package:pixez/network/oauth_client.dart';
 import 'package:pixez/page/about/languages.dart';
+import 'package:pixez/refresh_rate_plugin.dart';
 import 'package:pixez/secure_plugin.dart';
 import 'package:pixez/store/welcome_page_type.dart';
+import 'package:pixez/utils/display_mode_selection.dart';
+import 'package:pixez/utils/novel_reader_options.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 part 'user_setting.g.dart';
@@ -68,6 +72,7 @@ abstract class _UserSetting with Store {
   static const String THEME_MODE_KEY = "theme_mode";
   static const String SAVE_MODE_KEY = "save_mode";
   static const String NOVEL_FONT_SIZE_KEY = "novel_font_size";
+  static const String NOVEL_LINE_HEIGHT_KEY = "novel_line_height";
   static const String IS_RETURN_AGAIN_TO_EXIT_KEY = "return_again_to_exit";
   static const String IS_CLEAR_OLD_FORMAT_FILE_KEY = "is_clear_old_format_file";
   static const String IS_FOLLOW_AFTER_STAR = "is_follow_after_star";
@@ -84,8 +89,15 @@ abstract class _UserSetting with Store {
   static const String NAME_EVAL_KEY = "name_eval";
   static const String CROSS_ADAPT_KEY = "cross_adapt";
   static const String CROSS_ADAPT_WIDTH_KEY = "cross_adapt_width";
-  static const String H_CROSS_ADAPT_KEY = "cross_adapt";
-  static const String H_CROSS_ADAPT_WIDTH_KEY = "cross_adapt_width";
+  static const String H_CROSS_ADAPT_KEY_V2 = "h_cross_adapt_v2";
+  static const String H_CROSS_ADAPT_WIDTH_KEY_V2 = "h_cross_adapt_width_v2";
+  static const String LEGACY_DISPLAY_MODE_KEY = "display_mode";
+  static const String DISPLAY_MODE_AUTOMATIC_KEY = "display_mode_automatic_v2";
+  static const String DISPLAY_MODE_ID_KEY = "display_mode_id_v2";
+  static const String DISPLAY_MODE_WIDTH_KEY = "display_mode_width_v2";
+  static const String DISPLAY_MODE_HEIGHT_KEY = "display_mode_height_v2";
+  static const String DISPLAY_MODE_REFRESH_RATE_KEY =
+      "display_mode_refresh_rate_v2";
   static const String DEFAULT_PRIVATE_LIKE_KEY = "default_private_like";
   static const String IMAGE_PICKER_TYPE_KEY = "image_picker_type_renew";
   static const String LONG_PRESS_SAVE_CONFIRM_KEY = "long_press_save_confirm";
@@ -151,8 +163,17 @@ abstract class _UserSetting with Store {
   int crossCount = 2;
   @observable
   int hCrossCount = 4;
+  int? _legacyDisplayModeIndex;
   @observable
-  int? displayMode;
+  String displayModeDiagnostics = '';
+  @observable
+  bool displayModeAutomatic = true;
+  int? _displayModeId;
+  int? _displayModeWidth;
+  int? _displayModeHeight;
+  double? _displayModeRefreshRate;
+  bool _displayModeReady = false;
+  bool _displayModeRequestInProgress = false;
   @observable
   NetworkMode networkMode = NetworkMode.ech;
   @observable
@@ -170,7 +191,9 @@ abstract class _UserSetting with Store {
 
   bool get needsCompatibleDnsFetch => networkMode == NetworkMode.compat;
   @observable
-  double novelFontsize = 16.0;
+  double novelFontsize = defaultNovelFontSize;
+  @observable
+  double novelLineHeight = defaultNovelLineHeight;
   @observable
   dynamic locale = Locale('en', 'US'); //stupid mobx generator
   @observable
@@ -257,7 +280,7 @@ abstract class _UserSetting with Store {
   @action
   setHCrossAdapt(bool value) async {
     hCrossAdapt = value;
-    await prefs.setBool(H_CROSS_ADAPT_KEY, value);
+    await prefs.setBool(H_CROSS_ADAPT_KEY_V2, value);
   }
 
   @action
@@ -266,7 +289,7 @@ abstract class _UserSetting with Store {
   }
 
   persisitHCrossAdapterWidth(int value) async {
-    await prefs.setInt(H_CROSS_ADAPT_WIDTH_KEY, value);
+    await prefs.setInt(H_CROSS_ADAPT_WIDTH_KEY_V2, value);
   }
 
   @action
@@ -376,15 +399,40 @@ abstract class _UserSetting with Store {
 
   @action
   setNovelFontsizeWithoutSave(double v) async {
-    novelFontsize = v;
-    novelTextStyle = novelTextStyle.copyWith(fontSize: novelFontsize);
+    novelFontsize = clampNovelFontSize(v);
+    novelTextStyle = novelTextStyle.copyWith(
+      fontSize: novelFontsize,
+      height: novelLineHeight,
+    );
   }
 
   @action
   setNovelFontsize(double v) async {
-    await prefs.setDouble(NOVEL_FONT_SIZE_KEY, v);
-    novelFontsize = v;
-    novelTextStyle = novelTextStyle.copyWith(fontSize: novelFontsize);
+    novelFontsize = clampNovelFontSize(v);
+    await prefs.setDouble(NOVEL_FONT_SIZE_KEY, novelFontsize);
+    novelTextStyle = novelTextStyle.copyWith(
+      fontSize: novelFontsize,
+      height: novelLineHeight,
+    );
+  }
+
+  @action
+  setNovelLineHeightWithoutSave(double v) async {
+    novelLineHeight = clampNovelLineHeight(v);
+    novelTextStyle = novelTextStyle.copyWith(
+      fontSize: novelFontsize,
+      height: novelLineHeight,
+    );
+  }
+
+  @action
+  setNovelLineHeight(double v) async {
+    novelLineHeight = clampNovelLineHeight(v);
+    await prefs.setDouble(NOVEL_LINE_HEIGHT_KEY, novelLineHeight);
+    novelTextStyle = novelTextStyle.copyWith(
+      fontSize: novelFontsize,
+      height: novelLineHeight,
+    );
   }
 
   @action
@@ -462,11 +510,22 @@ abstract class _UserSetting with Store {
         ApiClient.Accept_Language;
     locale = iSupportedLocales[languageNum];
     crossAdapt = prefs.getBool(CROSS_ADAPT_KEY) ?? false;
-    hCrossAdapt = prefs.getBool(CROSS_ADAPT_KEY) ?? false;
+    final savedHCrossAdapt = prefs.getBool(H_CROSS_ADAPT_KEY_V2);
+    // The legacy landscape key collided with the portrait key. Treat it as
+    // unusable during migration so a portrait-only choice is not copied into
+    // landscape behavior.
+    hCrossAdapt = savedHCrossAdapt ?? false;
     final crossAdapterV = prefs.getInt(CROSS_ADAPT_WIDTH_KEY) ?? 100;
-    final hCrossAdapterV = prefs.getInt(H_CROSS_ADAPT_WIDTH_KEY) ?? 100;
+    final savedHCrossAdapterWidth = prefs.getInt(H_CROSS_ADAPT_WIDTH_KEY_V2);
+    final hCrossAdapterV = savedHCrossAdapterWidth ?? 100;
     crossAdapterWidth = min(2160, max(100, crossAdapterV));
     hCrossAdapterWidth = min(2160, max(100, hCrossAdapterV));
+    if (savedHCrossAdapt == null) {
+      await prefs.setBool(H_CROSS_ADAPT_KEY_V2, hCrossAdapt);
+    }
+    if (savedHCrossAdapterWidth == null) {
+      await prefs.setInt(H_CROSS_ADAPT_WIDTH_KEY_V2, hCrossAdapterWidth);
+    }
     crossCount = prefs.getInt(CROSS_COUNT_KEY) ?? 2;
     hCrossCount = prefs.getInt(H_CROSS_COUNT_KEY) ?? 4;
     feedAIBadge = prefs.getBool(FEED_AI_BADGE_KEY) ?? true;
@@ -551,7 +610,18 @@ abstract class _UserSetting with Store {
     zoomQuality = prefs.getInt(ZOOM_QUALITY_KEY) ?? 0;
     feedPreviewQuality = prefs.getInt(FEED_PREVIEW_QUALITY) ?? 0;
     singleFolder = prefs.getBool(SINGLE_FOLDER_KEY) ?? false;
-    displayMode = prefs.getInt('display_mode');
+    _legacyDisplayModeIndex = prefs.getInt(LEGACY_DISPLAY_MODE_KEY);
+    final savedDisplayModeAutomatic = prefs.getBool(DISPLAY_MODE_AUTOMATIC_KEY);
+    displayModeAutomatic =
+        savedDisplayModeAutomatic ?? _legacyDisplayModeIndex == null;
+    if (savedDisplayModeAutomatic == null && _legacyDisplayModeIndex == null) {
+      await prefs.setBool(DISPLAY_MODE_AUTOMATIC_KEY, true);
+    }
+    _displayModeId = prefs.getInt(DISPLAY_MODE_ID_KEY);
+    _displayModeWidth = prefs.getInt(DISPLAY_MODE_WIDTH_KEY);
+    _displayModeHeight = prefs.getInt(DISPLAY_MODE_HEIGHT_KEY);
+    _displayModeRefreshRate = prefs.getDouble(DISPLAY_MODE_REFRESH_RATE_KEY);
+    _displayModeReady = true;
     hIsNotAllow = prefs.getBool('h_is_not_allow') ?? false;
     pictureQuality = prefs.getInt(PICTURE_QUALITY_KEY) ?? 0;
     mangaQuality = prefs.getInt(MANGA_QUALITY_KEY) ?? 0;
@@ -565,8 +635,16 @@ abstract class _UserSetting with Store {
     nsfwMask = prefs.getBool(NSFW_MASK_KEY) ?? false;
     saveAfterStar = prefs.getBool(SAVE_AFTER_STAR) ?? false;
     starAfterSave = prefs.getBool(STAR_AFTER_SAVE) ?? false;
-    novelFontsize = prefs.getDouble(NOVEL_FONT_SIZE_KEY) ?? 16.0;
-    novelTextStyle = novelTextStyle.copyWith(fontSize: novelFontsize);
+    novelFontsize = clampNovelFontSize(
+      prefs.getDouble(NOVEL_FONT_SIZE_KEY) ?? defaultNovelFontSize,
+    );
+    novelLineHeight = clampNovelLineHeight(
+      prefs.getDouble(NOVEL_LINE_HEIGHT_KEY) ?? defaultNovelLineHeight,
+    );
+    novelTextStyle = novelTextStyle.copyWith(
+      fontSize: novelFontsize,
+      height: novelLineHeight,
+    );
     saveMode =
         prefs.getInt(SAVE_MODE_KEY) ??
         (isHelplessWay == null ? 0 : (isHelplessWay! ? 2 : 1));
@@ -591,11 +669,8 @@ abstract class _UserSetting with Store {
     if (Platform.isAndroid) {
       try {
         await SecurePlugin.configSecureWindow(nsfwMask);
-        var modeList = await FlutterDisplayMode.supported;
-        if (displayMode != null && modeList.length > displayMode!) {
-          await FlutterDisplayMode.setPreferredMode(modeList[displayMode!]);
-        }
       } catch (e) {}
+      await applyPreferredDisplayMode(reason: 'settings-loaded');
     }
     format = prefs.getString(SAVE_FORMAT_KEY);
     if (format == null || format!.isEmpty) format = intialFormat;
@@ -705,9 +780,188 @@ abstract class _UserSetting with Store {
   }
 
   @action
-  setDisplayMode(int value) async {
-    await prefs.setInt('display_mode', value);
-    displayMode = value;
+  Future<void> setDisplayMode(DisplayMode? value) async {
+    await _persistDisplayMode(value);
+    await applyPreferredDisplayMode(reason: 'user-selection');
+  }
+
+  Future<void> _persistDisplayMode(DisplayMode? value) async {
+    _legacyDisplayModeIndex = null;
+    if (value == null || value.id == 0) {
+      displayModeAutomatic = true;
+      _displayModeId = null;
+      _displayModeWidth = null;
+      _displayModeHeight = null;
+      _displayModeRefreshRate = null;
+    } else {
+      displayModeAutomatic = false;
+      _displayModeId = value.id;
+      _displayModeWidth = value.width;
+      _displayModeHeight = value.height;
+      _displayModeRefreshRate = value.refreshRate;
+    }
+    await prefs.setBool(DISPLAY_MODE_AUTOMATIC_KEY, displayModeAutomatic);
+    await prefs.remove(LEGACY_DISPLAY_MODE_KEY);
+    if (displayModeAutomatic) {
+      await Future.wait([
+        prefs.remove(DISPLAY_MODE_ID_KEY),
+        prefs.remove(DISPLAY_MODE_WIDTH_KEY),
+        prefs.remove(DISPLAY_MODE_HEIGHT_KEY),
+        prefs.remove(DISPLAY_MODE_REFRESH_RATE_KEY),
+      ]);
+    } else {
+      await Future.wait([
+        prefs.setInt(DISPLAY_MODE_ID_KEY, _displayModeId!),
+        prefs.setInt(DISPLAY_MODE_WIDTH_KEY, _displayModeWidth!),
+        prefs.setInt(DISPLAY_MODE_HEIGHT_KEY, _displayModeHeight!),
+        prefs.setDouble(
+          DISPLAY_MODE_REFRESH_RATE_KEY,
+          _displayModeRefreshRate!,
+        ),
+      ]);
+    }
+  }
+
+  /// Restores the user's explicit Android display mode, or requests the
+  /// highest refresh rate available at the current resolution by default.
+  ///
+  /// Android treats this as a preference and can still override it for power,
+  /// thermal, multi-window, or device-specific display policies.
+  Future<void> applyPreferredDisplayMode({String reason = 'resume'}) async {
+    if (!Platform.isAndroid ||
+        !_displayModeReady ||
+        _displayModeRequestInProgress) {
+      return;
+    }
+    _displayModeRequestInProgress = true;
+    try {
+      final modeList = await FlutterDisplayMode.supported;
+      final values = modeList.map(_toDisplayModeValue).toList();
+      final activeBefore = await FlutterDisplayMode.active;
+      DisplayMode? requested;
+      var explicitModeUnavailable = false;
+
+      if (!displayModeAutomatic) {
+        final restored = restoreDisplayMode(
+          values,
+          id: _displayModeId,
+          width: _displayModeWidth,
+          height: _displayModeHeight,
+          refreshRate: _displayModeRefreshRate,
+        );
+        requested = restored == null
+            ? null
+            : _findDisplayMode(modeList, restored);
+        if (requested != null &&
+            (_displayModeId != requested.id ||
+                _displayModeWidth != requested.width ||
+                _displayModeHeight != requested.height ||
+                _displayModeRefreshRate == null ||
+                !displayModeRefreshRatesMatch(
+                  _displayModeRefreshRate!,
+                  requested.refreshRate,
+                ))) {
+          // Mode IDs are assigned by the device and may change after an OS
+          // update. Refresh the persisted ID when its saved signature matched.
+          await _persistDisplayMode(requested);
+        }
+        explicitModeUnavailable =
+            requested == null && _legacyDisplayModeIndex == null;
+      }
+
+      final legacyIndex = _legacyDisplayModeIndex;
+      if (requested == null && legacyIndex != null) {
+        final migrated = migrateLegacyDisplayMode(values, legacyIndex);
+        requested = migrated == null
+            ? null
+            : _findDisplayMode(modeList, migrated);
+        await _persistDisplayMode(requested);
+      }
+
+      if (explicitModeUnavailable) {
+        // The device no longer exposes the saved mode ID/signature. Fall back
+        // to automatic highest-refresh mode instead of pinning an unrelated
+        // mode ID, and persist that decision so every resume is deterministic.
+        await _persistDisplayMode(null);
+      }
+
+      requested ??= _highestRefreshMode(
+        modeList,
+        width: activeBefore.width,
+        height: activeBefore.height,
+      );
+      if (requested != null && !displayModeAutomatic) {
+        await FlutterDisplayMode.setPreferredMode(requested);
+      }
+
+      final targetRate = requested?.refreshRate ?? activeBefore.refreshRate;
+      final nativeDiagnostics = await RefreshRatePlugin.apply(
+        refreshRate: targetRate,
+        preferredModeId: displayModeAutomatic ? 0 : (requested?.id ?? 0),
+      );
+      final activeAfter = await FlutterDisplayMode.active;
+      final preferred = displayModeAutomatic
+          ? 'automatic-highest'
+          : (await FlutterDisplayMode.preferred).toString();
+      displayModeDiagnostics =
+          'reason=$reason target=${targetRate.toStringAsFixed(2)}Hz '
+          'active=${activeAfter.refreshRate.toStringAsFixed(2)}Hz '
+          'preferred=$preferred native=$nativeDiagnostics';
+      if (kDebugMode) debugPrint('PixEzDisplayMode $displayModeDiagnostics');
+    } catch (error) {
+      if (kDebugMode) {
+        debugPrint('PixEzDisplayMode request failed: $error');
+      }
+      displayModeDiagnostics = 'request failed: $error';
+    } finally {
+      _displayModeRequestInProgress = false;
+    }
+  }
+
+  @action
+  Future<void> refreshDisplayModeDiagnostics({
+    String reason = 'settings',
+  }) async {
+    if (!Platform.isAndroid) return;
+    try {
+      final active = await FlutterDisplayMode.active;
+      final nativeDiagnostics = await RefreshRatePlugin.diagnostics();
+      displayModeDiagnostics =
+          'reason=$reason active=${active.refreshRate.toStringAsFixed(2)}Hz '
+          'native=$nativeDiagnostics';
+    } catch (error) {
+      displayModeDiagnostics = 'diagnostics failed: $error';
+    }
+  }
+
+  DisplayModeValue _toDisplayModeValue(DisplayMode mode) => DisplayModeValue(
+    id: mode.id,
+    width: mode.width,
+    height: mode.height,
+    refreshRate: mode.refreshRate,
+  );
+
+  DisplayMode? _findDisplayMode(
+    List<DisplayMode> modes,
+    DisplayModeValue value,
+  ) {
+    for (final mode in modes) {
+      if (mode.id == value.id) return mode;
+    }
+    return null;
+  }
+
+  DisplayMode? _highestRefreshMode(
+    List<DisplayMode> modes, {
+    required int width,
+    required int height,
+  }) {
+    final selected = highestRefreshModeForResolution(
+      modes.map(_toDisplayModeValue),
+      width: width,
+      height: height,
+    );
+    return selected == null ? null : _findDisplayMode(modes, selected);
   }
 
   @action

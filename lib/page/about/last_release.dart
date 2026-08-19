@@ -17,8 +17,9 @@ class LastRelease {
   String? tagName;
   List<Assets>? assets;
   String? body;
+  String? htmlUrl;
 
-  LastRelease({this.tagName, this.assets, this.body});
+  LastRelease({this.tagName, this.assets, this.body, this.htmlUrl});
 
   factory LastRelease.fromJson(Map<String, dynamic> json) {
     List<Assets>? assets;
@@ -32,7 +33,36 @@ class LastRelease {
       tagName: json['tag_name']?.toString(),
       assets: assets,
       body: json['body']?.toString(),
+      htmlUrl: json['html_url']?.toString(),
     );
+  }
+
+  String? get preferredAndroidDownloadUrl {
+    final candidates =
+        (assets ?? const <Assets>[])
+            .where((asset) => asset.isCompatibleAndroidApk)
+            .toList(growable: false)
+          ..sort(
+            (left, right) =>
+                right.androidPreference.compareTo(left.androidPreference),
+          );
+    return candidates.isEmpty
+        ? htmlUrl
+        : candidates.first.browserDownloadUrl ?? htmlUrl;
+  }
+
+  String? get preferredWindowsDownloadUrl {
+    final candidates =
+        (assets ?? const <Assets>[])
+            .where((asset) => asset.windowsPreference > 0)
+            .toList(growable: false)
+          ..sort(
+            (left, right) =>
+                right.windowsPreference.compareTo(left.windowsPreference),
+          );
+    return candidates.isEmpty
+        ? htmlUrl
+        : candidates.first.browserDownloadUrl ?? htmlUrl;
   }
 
   Map<String, dynamic> toJson() {
@@ -42,22 +72,67 @@ class LastRelease {
       data['assets'] = this.assets!.map((v) => v.toJson()).toList();
     }
     data['body'] = this.body;
+    data['html_url'] = this.htmlUrl;
     return data;
   }
 }
 
 class Assets {
   String? browserDownloadUrl;
+  String? name;
+  String? contentType;
 
-  Assets({this.browserDownloadUrl});
+  Assets({this.browserDownloadUrl, this.name, this.contentType});
 
   factory Assets.fromJson(Map<String, dynamic> json) {
-    return Assets(browserDownloadUrl: json['browser_download_url']?.toString());
+    return Assets(
+      browserDownloadUrl: json['browser_download_url']?.toString(),
+      name: json['name']?.toString(),
+      contentType: json['content_type']?.toString(),
+    );
+  }
+
+  String get _lowerName => (name ?? '').toLowerCase();
+
+  bool get isCompatibleAndroidApk {
+    if (browserDownloadUrl?.isNotEmpty != true ||
+        !_lowerName.endsWith('.apk')) {
+      return false;
+    }
+    return !_lowerName.contains('x86') &&
+        !_lowerName.contains('armeabi-v7a') &&
+        !_lowerName.contains('arm-v7a');
+  }
+
+  int get androidPreference {
+    if (!isCompatibleAndroidApk) return 0;
+    if (_lowerName.contains('universal')) return 300;
+    if (_lowerName.contains('arm64-v8a') || _lowerName.contains('arm64')) {
+      return 200;
+    }
+    return 100;
+  }
+
+  int get windowsPreference {
+    if (browserDownloadUrl?.isNotEmpty != true) return 0;
+    var score = switch (_lowerName) {
+      final value when value.endsWith('.msix') => 300,
+      final value when value.endsWith('.exe') => 250,
+      final value when value.endsWith('.zip') => 200,
+      _ => 0,
+    };
+    if (score > 0 &&
+        (_lowerName.contains('x86_64') || _lowerName.contains('x64'))) {
+      score += 20;
+    }
+    return score;
   }
 
   Map<String, dynamic> toJson() {
     final Map<String, dynamic> data = <String, dynamic>{};
     data['browser_download_url'] = this.browserDownloadUrl;
+    data['name'] = this.name;
+    data['content_type'] = this.contentType;
     return data;
   }
 }

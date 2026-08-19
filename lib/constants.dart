@@ -18,9 +18,11 @@ import 'dart:io';
 
 class Constants {
   static const String no_h = 'assets/images/h_long.jpg';
-  static String tagName = "0.9.104";
-  static const isGooglePlay =
-      bool.fromEnvironment("IS_GOOGLEPLAY", defaultValue: false);
+  static String tagName = "1.0.1";
+  static const isGooglePlay = bool.fromEnvironment(
+    "IS_GOOGLEPLAY",
+    defaultValue: false,
+  );
   static int type = 0;
   static String? code_verifier = null;
 

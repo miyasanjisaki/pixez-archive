@@ -15,6 +15,7 @@
  */
 
 import 'package:flutter/material.dart';
+import 'package:pixez/i18n.dart';
 
 class StarIcon extends StatefulWidget {
   final int state;
@@ -49,11 +50,20 @@ class _StarIconState extends State<StarIcon> {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 40,
-      height: 40,
-      color: Colors.transparent,
-      child: _buildData(state),
+    final isBookmarked = state != 0;
+    return Semantics(
+      label: isBookmarked
+          ? I18n.of(context).bookmarked
+          : I18n.of(context).not_bookmarked,
+      toggled: isBookmarked,
+      excludeSemantics: true,
+      child: Container(
+        width: 48,
+        height: 48,
+        alignment: Alignment.center,
+        color: Colors.transparent,
+        child: _buildData(state),
+      ),
     );
   }
 

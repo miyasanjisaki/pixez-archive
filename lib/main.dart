@@ -100,6 +100,9 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         _appState = state;
       });
     }
+    if (Platform.isAndroid && state == AppLifecycleState.resumed) {
+      unawaited(userSetting.applyPreferredDisplayMode());
+    }
   }
 
   @override
@@ -108,7 +111,9 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     topStore.dispose();
     fetcher.stop();
     subscription.cancel();
-    if (Platform.isIOS) WidgetsBinding.instance.removeObserver(this);
+    if (Platform.isIOS || Platform.isAndroid) {
+      WidgetsBinding.instance.removeObserver(this);
+    }
     super.dispose();
   }
 
@@ -128,7 +133,9 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     muteStore.init();
 
     super.initState();
-    if (Platform.isIOS) WidgetsBinding.instance.addObserver(this);
+    if (Platform.isIOS || Platform.isAndroid) {
+      WidgetsBinding.instance.addObserver(this);
+    }
     Future.delayed(Duration.zero, () {
       SingleInstancePlugin.argsParser(widget.arguments);
     });
@@ -186,25 +193,28 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             return MaterialApp(
               navigatorObservers: [BotToastNavigatorObserver(), routeObserver],
               locale: userSetting.locale,
-              home: Builder(
-                builder: (context) {
-                  return AnnotatedRegion<SystemUiOverlayStyle>(
-                    value: SystemUiOverlayStyle(
-                      systemNavigationBarColor: Colors.transparent,
-                      systemNavigationBarDividerColor: Colors.transparent,
-                      systemNavigationBarContrastEnforced: false,
-                      statusBarColor: Colors.transparent,
-                    ),
-                    child: SplashPage(),
-                  );
-                },
-              ),
+              home: SplashPage(),
               title: 'PixEz',
               builder: (context, child) {
                 if (Platform.isIOS) child = _buildMaskBuilder(context, child);
                 child = botToastBuilder(context, child);
                 I18n.context = context;
-                return child;
+                final brightness = Theme.of(context).brightness;
+                final iconBrightness = brightness == Brightness.dark
+                    ? Brightness.light
+                    : Brightness.dark;
+                return AnnotatedRegion<SystemUiOverlayStyle>(
+                  value: SystemUiOverlayStyle(
+                    statusBarColor: Colors.transparent,
+                    statusBarBrightness: brightness,
+                    statusBarIconBrightness: iconBrightness,
+                    systemNavigationBarColor: Colors.transparent,
+                    systemNavigationBarDividerColor: Colors.transparent,
+                    systemNavigationBarIconBrightness: iconBrightness,
+                    systemNavigationBarContrastEnforced: false,
+                  ),
+                  child: child ?? const SizedBox.shrink(),
+                );
               },
               themeMode: userSetting.themeMode,
               theme: ThemeData(

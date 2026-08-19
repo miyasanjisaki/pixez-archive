@@ -28,85 +28,130 @@ class UserBookmarkTagPage extends StatefulWidget {
 
 class _UserBookmarkTagPageState extends State<UserBookmarkTagPage>
     with SingleTickerProviderStateMixin {
-
   @override
   Widget build(BuildContext context) {
     return ScaffoldPage(
-      header: PageHeader(
-        title: Text(I18n.of(context).tag),
-      ),
+      header: PageHeader(title: Text(I18n.of(context).tag)),
       content: NavigationView(
-          pane: NavigationPane(items: [
-        PaneItem(
-          icon: Icon(FluentIcons.public_folder),
-          title: Text(I18n.of(context).public),
-          body: NewWidget(
-            restrict: "public",
-          ),
+        pane: NavigationPane(
+          items: [
+            PaneItem(
+              icon: Icon(FluentIcons.public_folder),
+              title: Text(I18n.of(context).public),
+              body: NewWidget(restrict: "public"),
+            ),
+            PaneItem(
+              icon: Icon(FluentIcons.lock),
+              title: Text(I18n.of(context).private),
+              body: NewWidget(restrict: "private"),
+            ),
+          ],
+          displayMode: PaneDisplayMode.top,
         ),
-        PaneItem(
-          icon: Icon(FluentIcons.lock),
-          title: Text(I18n.of(context).private),
-          body: NewWidget(
-            restrict: "private",
-          ),
-        ),
-      ], displayMode: PaneDisplayMode.top)),
+      ),
     );
   }
 }
 
-class NewWidget extends StatelessWidget {
+class NewWidget extends StatefulWidget {
   final String restrict;
 
   const NewWidget({Key? key, required this.restrict}) : super(key: key);
 
   @override
-  Widget build(BuildContext context) {
-    final EasyRefreshController _easyRefreshController = EasyRefreshController(
-        controlFinishLoad: true, controlFinishRefresh: true);
-    BookMarkTagStore _bookMarkTagStore = BookMarkTagStore(
-        int.parse(accountStore.now!.userId), _easyRefreshController);
-    return Observer(builder: (_) {
-      return EasyRefresh(
-        controller: _easyRefreshController,
-        refreshOnStart: true,
-        child: ListView.builder(
-          itemBuilder: (context, index) {
-            if (index == 0)
-              return ListTile(
-                title: Text(I18n.of(context).all),
-                onPressed: () {
-                  Navigator.pop(context, {"tag": null, "restrict": restrict});
-                },
-              );
-            else if (index == 1)
-              return ListTile(
-                title: Text(I18n.of(context).unclassified),
-                onPressed: () {
-                  Navigator.pop(
-                      context, {"tag": "未分類", "restrict": restrict}); //日语
-                },
-              );
-            var bookmarkTag = _bookMarkTagStore.bookmarkTags[index - 2];
-            return ListTile(
-              title: Text(bookmarkTag.name),
-              trailing: Text(bookmarkTag.count.toString()),
-              onPressed: () {
-                Navigator.pop(
-                    context, {"tag": bookmarkTag.name, "restrict": restrict});
-              },
-            );
-          },
-          itemCount: _bookMarkTagStore.bookmarkTags.length + 2,
-        ),
-        onRefresh: () async {
-          await _bookMarkTagStore.fetch(restrict);
-        },
-        onLoad: () async {
-          await _bookMarkTagStore.next();
-        },
-      );
+  State<NewWidget> createState() => _NewWidgetState();
+}
+
+class _NewWidgetState extends State<NewWidget> {
+  final EasyRefreshController _easyRefreshController = EasyRefreshController(
+    controlFinishLoad: true,
+    controlFinishRefresh: true,
+  );
+  late final BookMarkTagStore _bookMarkTagStore;
+
+  @override
+  void initState() {
+    super.initState();
+    _bookMarkTagStore = BookMarkTagStore(
+      int.parse(accountStore.now!.userId),
+      _easyRefreshController,
+    );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _bookMarkTagStore.fetch(widget.restrict);
     });
+  }
+
+  @override
+  void dispose() {
+    _easyRefreshController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Observer(
+      builder: (_) {
+        return EasyRefresh(
+          controller: _easyRefreshController,
+          refreshOnStart: false,
+          child: ListView.builder(
+            itemBuilder: (context, index) {
+              if (index == 0)
+                return ListTile(
+                  title: Text(I18n.of(context).all),
+                  onPressed: () {
+                    Navigator.pop(context, {
+                      "tag": null,
+                      "restrict": widget.restrict,
+                    });
+                  },
+                );
+              else if (index == 1)
+                return ListTile(
+                  title: Text(I18n.of(context).unclassified),
+                  onPressed: () {
+                    Navigator.pop(context, {
+                      "tag": "未分類",
+                      "restrict": widget.restrict,
+                    }); //日语
+                  },
+                );
+              else if (index == 2 &&
+                  _bookMarkTagStore.bookmarkTags.isEmpty &&
+                  _bookMarkTagStore.fetchFailed.value)
+                return ListTile(
+                  leading: const Icon(FluentIcons.refresh),
+                  title: Text(I18n.of(context).loading_failed_retry_message),
+                  onPressed: () => _bookMarkTagStore.fetch(widget.restrict),
+                );
+              var bookmarkTag = _bookMarkTagStore.bookmarkTags[index - 2];
+              return ListTile(
+                title: Text(bookmarkTag.name),
+                trailing: Text(bookmarkTag.count.toString()),
+                onPressed: () {
+                  Navigator.pop(context, {
+                    "tag": bookmarkTag.name,
+                    "restrict": widget.restrict,
+                  });
+                },
+              );
+            },
+            itemCount:
+                _bookMarkTagStore.bookmarkTags.length +
+                2 +
+                (_bookMarkTagStore.bookmarkTags.isEmpty &&
+                        _bookMarkTagStore.fetchFailed.value
+                    ? 1
+                    : 0),
+          ),
+          onRefresh: () async {
+            await _bookMarkTagStore.fetch(widget.restrict);
+          },
+          onLoad: () async {
+            await _bookMarkTagStore.next();
+          },
+        );
+      },
+    );
   }
 }

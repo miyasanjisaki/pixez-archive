@@ -20,6 +20,7 @@ import 'package:bot_toast/bot_toast.dart';
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter_mobx/flutter_mobx.dart';
 import 'package:pixez/clipboard_plugin.dart';
+import 'package:pixez/component/illust_stats_badge.dart';
 import 'package:pixez/component/null_hero.dart';
 import 'package:pixez/component/star_icon.dart';
 import 'package:pixez/constants.dart';
@@ -39,14 +40,18 @@ import 'context_menu.dart';
 class IllustCard extends StatefulWidget {
   final IllustStore store;
   final List<IllustStore>? iStores;
+  final List<IllustStore> Function()? iStoresProvider;
   final bool needToBan;
+  final bool showStats;
   final LightingStore lightingStore;
 
   IllustCard({
     required this.store,
     required this.lightingStore,
     this.iStores,
+    this.iStoresProvider,
     this.needToBan = false,
+    this.showStats = false,
   });
 
   @override
@@ -56,6 +61,7 @@ class IllustCard extends StatefulWidget {
 class _IllustCardState extends State<IllustCard> {
   late IllustStore store;
   late List<IllustStore>? iStores;
+  late List<IllustStore> Function()? iStoresProvider;
   late String tag;
   late LightingStore _lightingStore;
 
@@ -63,6 +69,7 @@ class _IllustCardState extends State<IllustCard> {
   void initState() {
     store = widget.store;
     iStores = widget.iStores;
+    iStoresProvider = widget.iStoresProvider;
     _lightingStore = widget.lightingStore;
     tag = this.hashCode.toString();
     super.initState();
@@ -73,6 +80,7 @@ class _IllustCardState extends State<IllustCard> {
     super.didUpdateWidget(oldWidget);
     store = widget.store;
     iStores = widget.iStores;
+    iStoresProvider = widget.iStoresProvider;
     _lightingStore = widget.lightingStore;
   }
 
@@ -129,7 +137,14 @@ class _IllustCardState extends State<IllustCard> {
               LPrinter.d(result);
               String restrict = result['restrict'];
               List<String>? tags = result['tags'];
-              store.star(restrict: restrict, tags: tags, force: true);
+              final success = await store.star(
+                restrict: restrict,
+                tags: tags,
+                force: true,
+              );
+              if (!success && context.mounted) {
+                BotToast.showText(text: I18n.of(context).failed);
+              }
             }
           },
         ),
@@ -192,6 +207,7 @@ class _IllustCardState extends State<IllustCard> {
         iStores: iStores!,
         store: store,
         lightingStore: _lightingStore,
+        iStoresProvider: iStoresProvider,
         heroString: tag,
       ),
       icon: const Icon(FluentIcons.picture),
@@ -200,6 +216,12 @@ class _IllustCardState extends State<IllustCard> {
   }
 
   Widget cardText() {
+    if (store.illusts!.type == 'manga') {
+      return Text(
+        '${I18n.of(context).manga} · ${store.illusts!.pageCount}',
+        style: const TextStyle(color: Colors.white),
+      );
+    }
     if (store.illusts!.type != "illust") {
       return Text(store.illusts!.type, style: TextStyle(color: Colors.white));
     }
@@ -257,6 +279,15 @@ class _IllustCardState extends State<IllustCard> {
                     ],
                   ),
                 ),
+                if (widget.showStats)
+                  Positioned(
+                    left: 8,
+                    bottom: 8,
+                    child: IllustStatsBadge(
+                      bookmarks: store.illusts!.totalBookmarks,
+                      views: store.illusts!.totalView,
+                    ),
+                  ),
               ],
             ),
           ),
@@ -296,6 +327,7 @@ class _IllustCardState extends State<IllustCard> {
         store: store,
         lightingStore: _lightingStore,
         iStores: iStores!,
+        iStoresProvider: iStoresProvider,
       );
     } else {
       widget = IllustLightingPage(

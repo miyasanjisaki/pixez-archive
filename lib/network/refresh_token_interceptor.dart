@@ -14,28 +14,35 @@
  *
  */
 
-import 'dart:async';
 import 'package:dio/dio.dart';
+import 'package:pixez/er/lprinter.dart';
 import 'package:pixez/main.dart';
 import 'package:pixez/models/account.dart';
 import 'package:pixez/models/error_message.dart';
 import 'package:pixez/network/api_client.dart';
 import 'package:pixez/network/oauth_client.dart';
 
-class RefreshTokenInterceptor extends QueuedInterceptorsWrapper {
+class RefreshTokenInterceptor extends InterceptorsWrapper {
+  static const _authRetryKey = 'pixez.authRetry';
+  static const _networkRetryKey = 'pixez.networkRetry';
+  static Future<String?>? _refreshInFlight;
+
   Future<String?> getToken() async {
-    String? token = accountStore.now?.accessToken; //可能读的时候没有错的快，导致now为null
-    String result;
-    if (token != null)
-      result = "Bearer " + token;
-    else {
-      AccountProvider accountProvider = AccountProvider();
-      await accountProvider.open();
-      final all = await accountProvider.getAllAccount();
-      if (all.isEmpty) return null;
-      result = "Bearer " + all[accountStore.index].accessToken;
+    final token = accountStore.now?.accessToken;
+    if (token != null) return 'Bearer $token';
+
+    // accountStore can still be initializing when the first request arrives.
+    // Reuse its provider instead of opening and closing another SQLite handle;
+    // sqflite databases are single-instance by default.
+    if (accountStore.accounts.isEmpty) {
+      await accountStore.fetch();
     }
-    return result;
+    final all = accountStore.accounts;
+    if (all.isEmpty) return null;
+    final index = accountStore.index >= 0 && accountStore.index < all.length
+        ? accountStore.index
+        : 0;
+    return 'Bearer ${all[index].accessToken}';
   }
 
   @override
@@ -50,111 +57,121 @@ class RefreshTokenInterceptor extends QueuedInterceptorsWrapper {
     return handler.next(options);
   }
 
-  int bti(bool bool) {
-    if (bool) {
-      return 1;
-    } else
-      return 0;
-  }
-
-  int lastRefreshTime = 0;
-  int retryNum = 0;
+  int bti(bool value) => value ? 1 : 0;
 
   @override
-  void onResponse(Response response, ResponseInterceptorHandler handler) {
-    retryNum = -2;
-    return handler.next(response);
-  }
+  void onError(DioException err, ErrorInterceptorHandler handler) async {
+    if (_isExpiredOAuthResponse(err) &&
+        err.requestOptions.extra[_authRetryKey] != true) {
+      try {
+        final currentToken = await getToken();
+        final requestToken =
+            err.requestOptions.headers[OAuthClient.AUTHORIZATION];
+        final token = currentToken != null && currentToken != requestToken
+            ? currentToken
+            : await _refreshTokenSingleFlight();
 
-  bool isRefreshing = false;
-
-  @override
-  void onError(DioException err, handler) async {
-    if (err.response != null && err.response!.statusCode == 400) {
-      DateTime dateTime = DateTime.now();
-      if ((dateTime.millisecondsSinceEpoch - lastRefreshTime) > 200000) {
-        try {
-          print("lock start ========================");
-          ErrorMessage errorMessage = ErrorMessage.fromJson(err.response!.data);
-          if (errorMessage.error.message!.contains("OAuth") &&
-              accountStore.now != null) {
-            final client = OAuthClient();
-            await client.createDioClient();
-            AccountPersist accountPersist = accountStore.now!;
-            Response response1 = await client.postRefreshAuthToken(
-                refreshToken: accountPersist.refreshToken,
-                deviceToken: accountPersist.deviceToken);
-            AccountResponse accountResponse =
-                Account.fromJson(response1.data).response;
-            final user = accountResponse.user;
-            await accountStore.updateSingle(AccountPersist(
-                userId: user.id,
-                userImage: user.profileImageUrls.px170x170,
-                accessToken: accountResponse.accessToken,
-                refreshToken: accountResponse.refreshToken,
-                deviceToken: "",
-                passWord: "no more",
-                name: user.name,
-                account: user.account,
-                mailAddress: user.mailAddress,
-                isPremium: bti(user.isPremium),
-                xRestrict: user.xRestrict,
-                isMailAuthorized: bti(user.isMailAuthorized),
-                id: accountPersist.id));
-            lastRefreshTime = DateTime.now().millisecondsSinceEpoch;
-            print("unlock ========================");
-          } else if (errorMessage.error.message!.contains("Limit")) {
-            lastRefreshTime = 0;
-            print("unlock ========================");
-            return handler.reject(err);
-          } else {
-            lastRefreshTime = 0;
-            print("unlock ========================");
-            return handler.reject(err);
-          }
-        } catch (e) {
-          print(e);
-          lastRefreshTime = 0;
-          print("unlock ========================");
-          return handler.reject(err);
+        if (token != null) {
+          final options = err.requestOptions;
+          options.headers[OAuthClient.AUTHORIZATION] = token;
+          options.extra[_authRetryKey] = true;
+          final response = await apiClient.httpClient.fetch<dynamic>(options);
+          return handler.resolve(response);
         }
+      } catch (error, stackTrace) {
+        LPrinter.d('Token refresh failed: $error');
+        LPrinter.d(stackTrace);
       }
-      var option = err.requestOptions;
-      final newToken = (await getToken());
-      print("unlock retry ======================== $newToken");
-      option.headers[OAuthClient.AUTHORIZATION] = newToken;
-      var response = await apiClient.httpClient.request(
-        option.path,
-        data: option.data,
-        queryParameters: option.queryParameters,
-        cancelToken: option.cancelToken,
-        options: Options(
-          method: option.method,
-          headers: option.headers,
-          contentType: option.contentType,
-        ),
-      );
-      return handler.resolve(response);
+      return handler.next(err);
     }
-    if (err.message?.contains(
-                "Connection closed before full header was received") ==
-            true &&
-        retryNum < 2) {
-      print('retry $retryNum =========================');
-      retryNum++;
-      RequestOptions options = err.requestOptions;
-      var response = await apiClient.httpClient.request(
-        options.path,
-        options: Options(
-          method: options.method,
-          headers: options.headers,
-          contentType: options.contentType,
-        ),
-        data: options.data,
-        queryParameters: options.queryParameters,
-      );
-      return handler.resolve(response);
+
+    final retryCount =
+        err.requestOptions.extra[_networkRetryKey] as int? ?? 0;
+    if (_isTransientConnectionError(err) &&
+        _isIdempotentRequest(err.requestOptions) &&
+        retryCount < 2) {
+      try {
+        final options = err.requestOptions;
+        options.extra[_networkRetryKey] = retryCount + 1;
+        final response = await apiClient.httpClient.fetch<dynamic>(options);
+        return handler.resolve(response);
+      } catch (error, stackTrace) {
+        LPrinter.d('Network retry failed: $error');
+        LPrinter.d(stackTrace);
+      }
     }
-    return handler.reject(err);
+
+    return handler.next(err);
+  }
+
+  bool _isExpiredOAuthResponse(DioException error) {
+    if (error.response?.statusCode != 400) return false;
+    try {
+      final message = ErrorMessage.fromJson(error.response!.data).error.message;
+      return message?.contains('OAuth') ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  bool _isTransientConnectionError(DioException error) {
+    return error.type == DioExceptionType.connectionError ||
+        (error.message?.contains(
+              'Connection closed before full header was received',
+            ) ??
+            false);
+  }
+
+  bool _isIdempotentRequest(RequestOptions options) {
+    final method = options.method.toUpperCase();
+    return method == 'GET' || method == 'HEAD';
+  }
+
+  Future<String?> _refreshTokenSingleFlight() async {
+    final pending = _refreshInFlight;
+    if (pending != null) return pending;
+
+    final refresh = _refreshToken();
+    _refreshInFlight = refresh;
+    try {
+      return await refresh;
+    } finally {
+      if (identical(_refreshInFlight, refresh)) {
+        _refreshInFlight = null;
+      }
+    }
+  }
+
+  Future<String?> _refreshToken() async {
+    final accountPersist = accountStore.now;
+    if (accountPersist == null) return null;
+
+    final client = OAuthClient();
+    await client.createDioClient();
+    final response = await client.postRefreshAuthToken(
+      refreshToken: accountPersist.refreshToken,
+      deviceToken: accountPersist.deviceToken,
+    );
+    final accountResponse = Account.fromJson(response.data).response;
+    final user = accountResponse.user;
+    final updated = await accountStore.updateSingle(
+      AccountPersist(
+        userId: user.id,
+        userImage: user.profileImageUrls.px170x170,
+        accessToken: accountResponse.accessToken,
+        refreshToken: accountResponse.refreshToken,
+        deviceToken: '',
+        passWord: 'no more',
+        name: user.name,
+        account: user.account,
+        mailAddress: user.mailAddress,
+        isPremium: bti(user.isPremium),
+        xRestrict: user.xRestrict,
+        isMailAuthorized: bti(user.isMailAuthorized),
+        id: accountPersist.id,
+      ),
+    );
+    if (!updated) return null;
+    return 'Bearer ${accountResponse.accessToken}';
   }
 }

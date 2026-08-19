@@ -1,0 +1,374 @@
+name: Build Android
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - '*'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  FLUTTER_VERSION: "3.44.9"
+  RUST_TOOLCHAIN: "1.97.1"
+  ANDROID_PLATFORM_PACKAGE: "platforms;android-37.0"
+  ANDROID_BUILD_TOOLS_PACKAGE: "build-tools;37.0.0"
+  ANDROID_NDK_PACKAGE: "ndk;28.2.13676358"
+  ANDROID_CMAKE_PACKAGE: "cmake;3.22.1"
+
+jobs:
+  build:
+    name: Build Android Release-mode Test APK
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+
+    steps:
+      - name: 签出仓库
+        uses: actions/checkout@v7
+
+      - name: 初始化 JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: 初始化 Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: 安装 Android 构建组件
+        shell: pwsh
+        run: |-
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+
+          $sdkRoot = if ($env:ANDROID_SDK_ROOT) {
+            $env:ANDROID_SDK_ROOT
+          } elseif ($env:ANDROID_HOME) {
+            $env:ANDROID_HOME
+          } else {
+            throw 'ANDROID_SDK_ROOT and ANDROID_HOME are both unset.'
+          }
+
+          $sdkManager = (Get-Command 'sdkmanager' -ErrorAction Stop).Source
+          1..100 | ForEach-Object { 'y' } |
+            & $sdkManager "--sdk_root=$sdkRoot" --licenses
+
+          $packages = @(
+            'platform-tools'
+            $env:ANDROID_PLATFORM_PACKAGE
+            $env:ANDROID_BUILD_TOOLS_PACKAGE
+            $env:ANDROID_NDK_PACKAGE
+            $env:ANDROID_CMAKE_PACKAGE
+          )
+          & $sdkManager "--sdk_root=$sdkRoot" $packages
+
+          $installedPackages = (
+            & $sdkManager "--sdk_root=$sdkRoot" --list_installed
+          ) -join "`n"
+          foreach ($package in $packages) {
+            if ($installedPackages -notmatch [regex]::Escape($package)) {
+              throw "Android SDK package was not installed: $package"
+            }
+          }
+
+      - name: 初始化 Flutter 3.44.9
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.44.9"
+          channel: stable
+          cache: true
+
+      - name: 固定 CargoKit Rust 工具链
+        shell: pwsh
+        run: |-
+          $ErrorActionPreference = 'Stop'
+
+          @"
+          [toolchain]
+          channel = "$env:RUST_TOOLCHAIN"
+          profile = "minimal"
+          targets = [
+            "aarch64-linux-android",
+            "armv7-linux-androideabi",
+            "i686-linux-android",
+            "x86_64-linux-android",
+          ]
+          "@ | Set-Content -LiteralPath 'rust-toolchain.toml' -Encoding utf8NoBOM
+
+      - name: 初始化 Rust 1.97.1
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: true
+          rustflags: ""
+
+      - name: 校验工具链版本
+        shell: pwsh
+        run: |-
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+
+          $flutterInfo = (& flutter --version --machine) | ConvertFrom-Json
+          if ($flutterInfo.frameworkVersion -ne $env:FLUTTER_VERSION) {
+            throw "Expected Flutter $env:FLUTTER_VERSION, got $($flutterInfo.frameworkVersion)."
+          }
+
+          $javaVersion = (& java -version 2>&1) -join "`n"
+          if ($javaVersion -notmatch 'version "17\.') {
+            throw "Expected JDK 17.`n$javaVersion"
+          }
+
+          $rustVersion = (& rustc --version) -join "`n"
+          if ($rustVersion -notmatch '^rustc 1\.97\.1 ') {
+            throw "Expected rustc 1.97.1, got $rustVersion."
+          }
+
+      - name: 还原依赖
+        shell: pwsh
+        run: |-
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          flutter pub get --no-example --enforce-lockfile
+
+      - name: 生成代码 (rhttp)
+        shell: pwsh
+        working-directory: plugins/rhttp/rhttp
+        run: |-
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          dart run build_runner build
+
+      - name: 生成代码 (PixEz)
+        shell: pwsh
+        run: |-
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          dart run build_runner build
+
+      - name: 运行测试
+        shell: pwsh
+        run: |-
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          flutter test --no-pub
+
+      - name: 构建 Release 模式测试签名 APK
+        shell: pwsh
+        env:
+          PIXEZ_TEST_SIGN_RELEASE: "true"
+          PIXEZ_TEST_KEYSTORE_BASE64: ${{ secrets.PIXEZ_TEST_KEYSTORE_BASE64 }}
+          PIXEZ_TEST_KEYSTORE_PASSWORD: ${{ secrets.PIXEZ_TEST_KEYSTORE_PASSWORD }}
+          PIXEZ_TEST_KEY_ALIAS: ${{ secrets.PIXEZ_TEST_KEY_ALIAS }}
+          PIXEZ_TEST_KEY_PASSWORD: ${{ secrets.PIXEZ_TEST_KEY_PASSWORD }}
+        run: |-
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+
+          $requiredSecrets = @(
+            'PIXEZ_TEST_KEYSTORE_BASE64'
+            'PIXEZ_TEST_KEYSTORE_PASSWORD'
+            'PIXEZ_TEST_KEY_ALIAS'
+            'PIXEZ_TEST_KEY_PASSWORD'
+          )
+          foreach ($secretName in $requiredSecrets) {
+            if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($secretName))) {
+              throw "Required repository secret is missing: $secretName"
+            }
+          }
+
+          $keystorePath = Join-Path $env:RUNNER_TEMP 'pixez-ci-test.p12'
+          [IO.File]::WriteAllBytes(
+            $keystorePath,
+            [Convert]::FromBase64String($env:PIXEZ_TEST_KEYSTORE_BASE64)
+          )
+          @"
+          storePassword=$env:PIXEZ_TEST_KEYSTORE_PASSWORD
+          keyPassword=$env:PIXEZ_TEST_KEY_PASSWORD
+          keyAlias=$env:PIXEZ_TEST_KEY_ALIAS
+          storeFile=$($keystorePath -replace '\\', '/')
+          "@ | Set-Content -LiteralPath 'android/key.properties' -Encoding utf8NoBOM
+
+          flutter build apk --release --no-pub
+
+      - name: 验证 APK 对齐和测试签名
+        shell: pwsh
+        run: |-
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+
+          $sdkRoot = if ($env:ANDROID_SDK_ROOT) {
+            $env:ANDROID_SDK_ROOT
+          } elseif ($env:ANDROID_HOME) {
+            $env:ANDROID_HOME
+          } else {
+            throw 'ANDROID_SDK_ROOT and ANDROID_HOME are both unset.'
+          }
+          $buildTools = Join-Path $sdkRoot 'build-tools/37.0.0'
+          $apksigner = Join-Path $buildTools 'apksigner'
+          $zipalign = Join-Path $buildTools 'zipalign'
+          foreach ($tool in @($apksigner, $zipalign)) {
+            if (-not (Test-Path -LiteralPath $tool -PathType Leaf)) {
+              throw "Android build tool was not found: $tool"
+            }
+          }
+
+          $apkDirectory = Join-Path $PWD 'build/app/outputs/flutter-apk'
+          $apkFiles = @(Get-ChildItem -LiteralPath $apkDirectory -Filter '*-release.apk' -File)
+          if ($apkFiles.Count -eq 0) {
+            throw "No release-mode APK files were found in $apkDirectory."
+          }
+          foreach ($apkFile in $apkFiles) {
+            & $zipalign -c -P 16 4 $apkFile.FullName
+            $signatureReport = (& $apksigner verify --verbose --print-certs $apkFile.FullName) -join "`n"
+            if ($signatureReport -notmatch 'CN=PixEz Archive CI Test') {
+              throw "APK is not signed by the expected CI test key: $($apkFile.Name)"
+            }
+            if ($signatureReport -notmatch '350f39370cb67176c30c16e8d39653ea7b57929b187e55edaff9dd0cb55a9707') {
+              throw "APK test signer fingerprint is unexpected: $($apkFile.Name)"
+            }
+
+            $archive = [IO.Compression.ZipFile]::OpenRead($apkFile.FullName)
+            try {
+              $platformVerifierFound = $false
+              foreach ($entry in @($archive.Entries | Where-Object { $_.FullName -match '^classes\d*\.dex$' })) {
+                $entryStream = $entry.Open()
+                $buffer = [IO.MemoryStream]::new()
+                try {
+                  $entryStream.CopyTo($buffer)
+                  $dexText = [Text.Encoding]::ASCII.GetString($buffer.ToArray())
+                  if ($dexText.Contains('org/rustls/platformverifier')) {
+                    $platformVerifierFound = $true
+                    break
+                  }
+                } finally {
+                  $buffer.Dispose()
+                  $entryStream.Dispose()
+                }
+              }
+              if (-not $platformVerifierFound) {
+                throw "rustls platform verifier was stripped from $($apkFile.Name)"
+              }
+            } finally {
+              $archive.Dispose()
+            }
+            $signatureReport
+          }
+
+      - name: 生成 APK SHA-256
+        shell: pwsh
+        run: |-
+          $ErrorActionPreference = 'Stop'
+
+          $apkDirectory = Join-Path $PWD 'build/app/outputs/flutter-apk'
+          $apkFiles = @(
+            Get-ChildItem -LiteralPath $apkDirectory -Filter '*.apk' -File |
+              Sort-Object -Property Name
+          )
+          if ($apkFiles.Count -eq 0) {
+            throw "No APK files were found in $apkDirectory."
+          }
+
+          $checksumLines = @(
+            foreach ($apkFile in $apkFiles) {
+              $hash = (
+                Get-FileHash -LiteralPath $apkFile.FullName -Algorithm SHA256
+              ).Hash.ToLowerInvariant()
+              "$hash  $($apkFile.Name)"
+            }
+          )
+          $checksumFile = Join-Path $apkDirectory 'SHA256SUMS.txt'
+          $checksumLines |
+            Set-Content -LiteralPath $checksumFile -Encoding utf8NoBOM
+
+          '### Android release-mode test APK SHA-256' |
+            Out-File -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          '> These AOT APKs use the persistent PixEz CI test certificate for installable performance testing only.' |
+            Out-File -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          '```text' |
+            Out-File -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          $checksumLines |
+            Out-File -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          '```' |
+            Out-File -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+
+      - name: 上传 APK 和校验和
+        uses: actions/upload-artifact@v7
+        with:
+          name: android-release-mode-test-apk
+          path: |-
+            build/app/outputs/flutter-apk/*.apk
+            build/app/outputs/flutter-apk/SHA256SUMS.txt
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: 单独上传 ARM64 APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: android-arm64-release-mode-test-apk
+          path: |-
+            build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+            build/app/outputs/flutter-apk/SHA256SUMS.txt
+          if-no-files-found: error
+          compression-level: 0
+
+  publish:
+    needs: build
+    name: 发布 Android APK
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+    runs-on: ubuntu-24.04
+    steps:
+      - name: 下载 Android APK 产物
+        uses: actions/download-artifact@v8
+        with:
+          name: android-release-mode-test-apk
+          path: artifacts
+
+      - name: 准备 Release APK 文件
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |-
+          $ErrorActionPreference = 'Stop'
+
+          if ($env:RELEASE_TAG -notmatch '^[0-9A-Za-z][0-9A-Za-z._-]*$') {
+            throw "Unsupported release tag for an asset filename: $env:RELEASE_TAG"
+          }
+
+          $artifactDirectory = Join-Path $PWD 'artifacts'
+          $releaseFiles = @(
+            @{
+              Source = 'app-release.apk'
+              Destination = "PixEz-Archive-$env:RELEASE_TAG-universal.apk"
+            }
+            @{
+              Source = 'app-arm64-v8a-release.apk'
+              Destination = "PixEz-Archive-$env:RELEASE_TAG-arm64-v8a.apk"
+            }
+          )
+
+          foreach ($releaseFile in $releaseFiles) {
+            $source = Join-Path $artifactDirectory $releaseFile.Source
+            if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
+              throw "Required Android APK was not downloaded: $source"
+            }
+            Copy-Item `
+              -LiteralPath $source `
+              -Destination (Join-Path $artifactDirectory $releaseFile.Destination)
+          }
+
+      - name: 上传 Android APK 到 GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          fail_on_unmatched_files: true
+          files: |-
+            artifacts/PixEz-Archive-${{ github.ref_name }}-universal.apk
+            artifacts/PixEz-Archive-${{ github.ref_name }}-arm64-v8a.apk

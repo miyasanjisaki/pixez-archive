@@ -33,6 +33,8 @@ import 'package:pixez/models/tags.dart';
 import 'package:pixez/models/ugoira_metadata_response.dart';
 import 'package:pixez/network/pixez_network_settings.dart';
 import 'package:pixez/network/refresh_token_interceptor.dart';
+import 'package:pixez/utils/illust_bookmark_tags.dart';
+import 'package:pixez/utils/popular_preview_merge.dart';
 import 'package:rhttp/rhttp.dart' as r;
 
 final ApiClient apiClient = ApiClient();
@@ -99,6 +101,22 @@ class ApiClient {
     return ConversionLayerAdapter(compatibleClient);
   }
 
+  /// Creates a transport that keeps requests on Pixiv's own image host.
+  ///
+  /// This is used for private-account operations such as bookmark visual
+  /// search, where rewriting image URLs through a configured third-party
+  /// source would disclose private bookmark identifiers. Compatibility DNS is
+  /// still applied when the selected network mode requires it.
+  static Future<ConversionLayerAdapter> createDirectPixivImageClient() async {
+    final compatibleClient = await r.RhttpCompatibleClient.create(
+      settings: PixezNetworkSettings.forImages(
+        PixezNetworkSettings.imageHost,
+        userSetting.networkMode,
+      ),
+    );
+    return ConversionLayerAdapter(compatibleClient);
+  }
+
   ApiClient({bool isBookmark = false}) {
     String time = getIsoDate();
     httpClient =
@@ -122,9 +140,10 @@ class ApiClient {
     if (kDebugMode) {
       httpClient.interceptors.add(
         LogInterceptor(
-          responseBody: true,
-          responseHeader: true,
-          requestBody: true,
+          requestHeader: false,
+          requestBody: false,
+          responseHeader: false,
+          responseBody: false,
         ),
       );
     }
@@ -241,27 +260,16 @@ class ApiClient {
     String restrict,
     List<String>? tags,
   ) async {
-    if (tags != null && tags.isNotEmpty) {
-      String tagString = tags.first;
-      for (var i = 1; i < tags.length; i++) {
-        tagString = tagString + ' ' + tags[i].trim();
-      }
-      return httpClient.post(
-        "/v2/illust/bookmark/add",
-        data: notNullMap({
-          "illust_id": illust_id,
-          "restrict": restrict,
-          "tags[]": tagString,
-          //null toString =="null"
-        }),
-        options: Options(contentType: Headers.formUrlEncodedContentType),
-      );
-    } else
-      return httpClient.post(
-        "/v2/illust/bookmark/add",
-        data: notNullMap({"illust_id": illust_id, "restrict": restrict}),
-        options: Options(contentType: Headers.formUrlEncodedContentType),
-      );
+    final encodedTags = encodeIllustBookmarkTags(tags);
+    return httpClient.post(
+      "/v2/illust/bookmark/add",
+      data: notNullMap({
+        "illust_id": illust_id,
+        "restrict": restrict,
+        "tags[]": encodedTags,
+      }),
+      options: Options(contentType: Headers.formUrlEncodedContentType),
+    );
   }
 
   Future<Response> postUnLikeIllust(int illust_id) async {
@@ -633,10 +641,14 @@ class ApiClient {
   Future<IllustBookmarkTagsResponse> getUserBookmarkTagsIllust(
     int user_id, {
     String restrict = 'public',
+    bool force = false,
   }) async {
     final result = await httpClient.get(
       "/v1/user/bookmark-tags/illust",
       queryParameters: notNullMap({"user_id": user_id, "restrict": restrict}),
+      options: options
+          .copyWith(policy: force ? CachePolicy.refresh : null)
+          .toOptions(),
     );
     return IllustBookmarkTagsResponse.fromJson(result.data);
   }
@@ -646,12 +658,111 @@ class ApiClient {
     return result;
   }
 
-  Future<Response> getPopularPreview(String keyword) async {
-    String a = httpClient.options.baseUrl;
-    String previewUrl =
-        '${a}/v1/search/popular-preview/illust?filter=for_android&include_translated_tag_results=true&merge_plain_keyword_results=true&word=${keyword}&search_target=partial_match_for_tags';
-    final result = await httpClient.get(previewUrl);
-    return result;
+  Future<Response> getPopularPreview(
+    String keyword, {
+    String searchTarget = 'partial_match_for_tags',
+    int? searchAiType,
+    DateTime? startDate,
+    DateTime? endDate,
+  }) async {
+    return httpClient.get(
+      '/v1/search/popular-preview/illust',
+      queryParameters: notNullMap({
+        'filter': 'for_android',
+        'include_translated_tag_results': true,
+        'merge_plain_keyword_results': true,
+        'word': keyword,
+        'search_target': searchTarget,
+        'search_ai_type': searchAiType,
+        'start_date': _getPopularPreviewDate(startDate),
+        'end_date': _getPopularPreviewDate(endDate),
+      }),
+    );
+  }
+
+  /// Combines several independent official single-page popular previews.
+  ///
+  /// The dated requests are mutually exclusive, but their union is only a
+  /// larger candidate set. It is not Pixiv's complete global popularity order
+  /// and the appended items are not "rank 31 onwards".
+  Future<Response> getExpandedPopularPreview(
+    String keyword, {
+    String searchTarget = 'partial_match_for_tags',
+    int? searchAiType,
+    DateTime? now,
+  }) async {
+    final specs = buildExpandedPopularPreviewWindows(now ?? DateTime.now());
+
+    final outcomes = await Future.wait([
+      for (final spec in specs)
+        _loadPopularPreviewWindow(
+          keyword,
+          spec,
+          searchTarget: searchTarget,
+          searchAiType: searchAiType,
+        ),
+    ]);
+    final merged = mergePopularPreviewResponses(
+      outcomes.map((outcome) => outcome.windowResult),
+    );
+    if (merged.successfulWindowCount == 0) {
+      final failure = outcomes.firstWhere((outcome) => outcome.error != null);
+      Error.throwWithStackTrace(failure.error!, failure.stackTrace!);
+    }
+
+    final baseResponse = outcomes
+        .firstWhere((outcome) => outcome.response != null)
+        .response!;
+    return Response(
+      data: merged.toResponseData(),
+      requestOptions: baseResponse.requestOptions,
+      statusCode: baseResponse.statusCode,
+      statusMessage: baseResponse.statusMessage,
+      isRedirect: baseResponse.isRedirect,
+      redirects: baseResponse.redirects,
+      extra: Map<String, dynamic>.from(baseResponse.extra),
+      headers: baseResponse.headers,
+    );
+  }
+
+  Future<_PopularPreviewRequestOutcome> _loadPopularPreviewWindow(
+    String keyword,
+    PopularPreviewRequestWindow spec, {
+    required String searchTarget,
+    required int? searchAiType,
+  }) async {
+    try {
+      final response = await getPopularPreview(
+        keyword,
+        searchTarget: searchTarget,
+        searchAiType: searchAiType,
+        startDate: spec.startDate,
+        endDate: spec.endDate,
+      );
+      final data = response.data;
+      if (data is! Map) {
+        throw const FormatException('Popular preview response is not a map');
+      }
+      final illusts = data['illusts'];
+      if (illusts is! List || illusts.any((item) => item is! Map)) {
+        throw const FormatException(
+          'Popular preview response has an invalid illusts list',
+        );
+      }
+      return _PopularPreviewRequestOutcome.success(
+        PopularPreviewWindowResult.success(
+          spec.window,
+          Map<String, dynamic>.from(data),
+        ),
+        response,
+      );
+    } catch (error, stackTrace) {
+      return _PopularPreviewRequestOutcome.failure(
+        PopularPreviewWindowResult.failure(spec.window, error),
+        error,
+        stackTrace,
+      );
+    }
   }
 
   Future<Response> getUserAISettings() async {
@@ -775,4 +886,45 @@ class ApiClient {
     );
     return FollowDetail.fromJson(res.data['follow_detail']);
   }
+}
+
+class _PopularPreviewRequestOutcome {
+  const _PopularPreviewRequestOutcome._({
+    required this.windowResult,
+    this.response,
+    this.error,
+    this.stackTrace,
+  });
+
+  factory _PopularPreviewRequestOutcome.success(
+    PopularPreviewWindowResult windowResult,
+    Response response,
+  ) {
+    return _PopularPreviewRequestOutcome._(
+      windowResult: windowResult,
+      response: response,
+    );
+  }
+
+  factory _PopularPreviewRequestOutcome.failure(
+    PopularPreviewWindowResult windowResult,
+    Object error,
+    StackTrace stackTrace,
+  ) {
+    return _PopularPreviewRequestOutcome._(
+      windowResult: windowResult,
+      error: error,
+      stackTrace: stackTrace,
+    );
+  }
+
+  final PopularPreviewWindowResult windowResult;
+  final Response? response;
+  final Object? error;
+  final StackTrace? stackTrace;
+}
+
+String? _getPopularPreviewDate(DateTime? value) {
+  if (value == null) return null;
+  return DateFormat('yyyy-MM-dd').format(value);
 }

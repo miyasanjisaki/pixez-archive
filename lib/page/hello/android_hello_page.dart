@@ -16,7 +16,6 @@
 
 import 'dart:async';
 import 'dart:io';
-import 'dart:ui';
 
 import 'package:bot_toast/bot_toast.dart';
 import 'package:device_info_plus/device_info_plus.dart';
@@ -40,7 +39,6 @@ import 'package:pixez/page/login/login_page.dart';
 import 'package:pixez/page/saucenao/saucenao_page.dart';
 import 'package:pixez/page/search/search_page.dart';
 import 'package:pixez/page/search/suggest/search_suggestion_page.dart';
-import 'package:pixez/page/webview/saucenao_webview_page.dart';
 import 'package:pixez/utils/haptic_util.dart';
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 
@@ -159,49 +157,42 @@ class _AndroidHelloPageState extends State<AndroidHelloPage> {
   }
 
   Widget _buildNavigationBar(BuildContext context) {
-    return ClipRRect(
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-        child: NavigationBar(
-          height: 68,
-          backgroundColor: Theme.of(
-            context,
-          ).colorScheme.surface.withValues(alpha: 0.9),
-          destinations: [
-            NavigationDestination(
-              icon: Icon(Icons.home),
-              label: I18n.of(context).home,
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.leaderboard),
-              label: I18n.of(context).rank,
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.favorite),
-              label: I18n.of(context).quick_view,
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.search),
-              label: I18n.of(context).search,
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.more_horiz),
-              label: I18n.of(context).more,
-            ),
-          ],
-          selectedIndex: index,
-          onDestinationSelected: (index) {
-            HapticUtil.selectionClick();
-            if (this.index == index) {
-              topStore.setTop("${index + 1}00");
-            }
-            setState(() {
-              this.index = index;
-            });
-            if (_pageController.hasClients) _pageController.jumpToPage(index);
-          },
+    return NavigationBar(
+      height: 68,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      destinations: [
+        NavigationDestination(
+          icon: Icon(Icons.home),
+          label: I18n.of(context).home,
         ),
-      ),
+        NavigationDestination(
+          icon: Icon(Icons.leaderboard),
+          label: I18n.of(context).rank,
+        ),
+        NavigationDestination(
+          icon: Icon(Icons.favorite),
+          label: I18n.of(context).quick_view,
+        ),
+        NavigationDestination(
+          icon: Icon(Icons.search),
+          label: I18n.of(context).search,
+        ),
+        NavigationDestination(
+          icon: Icon(Icons.more_horiz),
+          label: I18n.of(context).more,
+        ),
+      ],
+      selectedIndex: index,
+      onDestinationSelected: (index) {
+        HapticUtil.selectionClick();
+        if (this.index == index) {
+          topStore.setTop("${index + 1}00");
+        }
+        setState(() {
+          this.index = index;
+        });
+        if (_pageController.hasClients) _pageController.jumpToPage(index);
+      },
     );
   }
 
@@ -331,11 +322,7 @@ class _AndroidHelloPageState extends State<AndroidHelloPage> {
                 continue;
               }
               if (i.type == SharedMediaType.image) {
-                if (userSetting.useSaunceNaoWebview) {
-                  Leader.push(context, SauncenaoWebview(path: i.path));
-                } else {
-                  Leader.push(context, SauceNaoPage(path: i.path));
-                }
+                Leader.push(context, SauceNaoPage(path: i.path));
               }
             }
           },
@@ -352,11 +339,7 @@ class _AndroidHelloPageState extends State<AndroidHelloPage> {
           continue;
         }
         if (i.type == SharedMediaType.image) {
-          if (userSetting.useSaunceNaoWebview) {
-            Leader.push(context, SauncenaoWebview(path: i.path));
-          } else {
-            Leader.push(context, SauceNaoPage(path: i.path));
-          }
+          Leader.push(context, SauceNaoPage(path: i.path));
         }
       }
     });
@@ -547,6 +530,12 @@ class _AnimatedToggleFullscreenFABState
         _controller.reverse();
       }
     }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
   }
 
   @override

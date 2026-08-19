@@ -641,7 +641,14 @@ abstract class IllustItemsPageState extends State<IllustItemsPage>
       if (userSetting.saveAfterStar && (illustStore.state == 0)) {
         saveStore.saveImage(illustStore.illusts!);
       }
-      illustStore.star(restrict: restrict, tags: tags, force: true);
+      final success = await illustStore.star(
+        restrict: restrict,
+        tags: tags,
+        force: true,
+      );
+      if (!success && mounted) {
+        BotToast.showText(text: I18n.of(context).failed);
+      }
     }
   }
 

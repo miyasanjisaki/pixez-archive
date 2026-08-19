@@ -39,9 +39,6 @@
   "display_mode": "Laju penyegaran tampilan",
   "display_mode_message": "Pilih kecepatan refresh (eksperimental)",
   "display_mode_warning": "Jangan mengubahnya kecuali jika perangkatmu mendukungnya.",
-  "donate_message": "Terima kasih!",
-  "donate_title": "Belikan saya kopi",
-  "donation": "Belikan saya kopi",
   "dont_have_account": "Belum memiliki akun?",
   "download_address": "Tautan unduh",
   "encode": "Pengkodean",
@@ -79,7 +76,7 @@
   "manga": "Manga",
   "medium": "Menengah",
   "mode_list": "Harian Untuk_laki-laki Untuk_perempuan Asli Pemula Mingguan Bulanan AI XVIII_AI XVIII_MINGGU XVIII_G",
-  "novel_mode_list": "Harian Untuk_laki-laki Untuk_perempuan Mingguan AI XVIII_AI XVIII_MINGGU XVIII_G",
+  "novel_mode_list": "Harian Untuk_laki-laki Untuk_perempuan Mingguan AI XVIII_AI XVIII_HARIAN XVIII_MINGGU XVIII_G",
   "more": "Lebih banyak",
   "more_then_starnum_bookmark": "Lebih banyak {starNum} seperti(s)",
   "@more_then_starnum_bookmark": {

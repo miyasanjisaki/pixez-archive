@@ -1,81 +1,81 @@
-import 'package:easy_refresh/easy_refresh.dart';
 import 'package:fluent_ui/fluent_ui.dart';
-import 'package:flutter_mobx/flutter_mobx.dart';
-import 'package:pixez/fluent/component/pixiv_image.dart';
-import 'package:pixez/er/leader.dart';
+import 'package:pixez/fluent/lighting/fluent_lighting_page.dart';
 import 'package:pixez/i18n.dart';
 import 'package:pixez/lighting/lighting_store.dart';
+import 'package:pixez/models/illust.dart';
 import 'package:pixez/network/api_client.dart';
-import 'package:pixez/fluent/page/picture/illust_lighting_page.dart';
+import 'package:pixez/utils/illust_result_options.dart';
 
 class RecomMangaPage extends StatefulWidget {
-  const RecomMangaPage({Key? key}) : super(key: key);
+  const RecomMangaPage({super.key});
 
   @override
   State<RecomMangaPage> createState() => _RecomMangaPageState();
 }
 
 class _RecomMangaPageState extends State<RecomMangaPage> {
-  EasyRefreshController controller = EasyRefreshController(
-      controlFinishLoad: true, controlFinishRefresh: true);
-  late LightingStore _store;
+  late final ApiSource _source;
+  IllustResultSort _resultSort = IllustResultSort.apiOrder;
 
   @override
   void initState() {
-    _store = LightingStore(
-      ApiSource(
-        futureGet: () => apiClient.getMangaRecommend(),
-      ),
-    );
-    _store.fetch();
     super.initState();
+    _source = ApiSource(futureGet: apiClient.getMangaRecommend);
   }
 
-  @override
-  void dispose() {
-    super.dispose();
-  }
+  Comparator<Illusts>? get _comparator => buildIllustResultComparator<Illusts>(
+    _resultSort,
+    bookmarksOf: (illust) => illust.totalBookmarks,
+    viewsOf: (illust) => illust.totalView,
+  );
 
   @override
   Widget build(BuildContext context) {
     return ScaffoldPage(
-      header: PageHeader(
-        title: Text("Manga"),
+      header: PageHeader(title: Text(I18n.of(context).manga)),
+      content: LightingList(
+        source: _source,
+        filter: (illust) => illust.type == 'manga',
+        comparator: _comparator,
+        showStats: true,
+        header: _buildSortControls(context),
       ),
-      content: Observer(builder: (_) {
-        return EasyRefresh(
-          controller: controller,
-          onLoad: () {
-            _store.fetchNext();
-          },
-          onRefresh: () {
-            _store.fetch();
-          },
-          child: Container(
-            child: _store.iStores.isEmpty
-                ? Container()
-                : ListView.builder(
-                    itemBuilder: (context, index) {
-                      final illust = _store.iStores[index].illusts;
-                      return Card(
-                        child: IconButton(
-                            onPressed: () {
-                              Leader.push(
-                                context,
-                                IllustLightingPage(id: illust.id),
-                                icon: Icon(FluentIcons.picture),
-                                title: Text(I18n.of(context).illust_id +
-                                    ': ${illust.id}'),
-                              );
-                            },
-                            icon: PixivImage(illust!.imageUrls.medium)),
                       );
-                    },
-                    itemCount: _store.iStores.length,
-                  ),
+  }
+
+  Widget _buildSortControls(BuildContext context) {
+    final labels = <IllustResultSort, String>{
+      IllustResultSort.apiOrder: I18n.of(context).pixiv_sort,
+      IllustResultSort.bookmarksDesc: I18n.of(context).total_bookmark,
+      IllustResultSort.viewsDesc: I18n.of(context).total_view,
+    };
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            I18n.of(context).loaded_result_sort,
+            style: FluentTheme.of(context).typography.bodyStrong,
           ),
-        );
-      }),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final entry in labels.entries)
+                ToggleButton(
+                  checked: _resultSort == entry.key,
+                  onChanged: (_) {
+                    if (_resultSort == entry.key) return;
+                    setState(() => _resultSort = entry.key);
+                    },
+                  child: Text(entry.value),
+                  ),
+            ],
+          ),
+        ],
+          ),
     );
   }
 }

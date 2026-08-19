@@ -1,77 +1,112 @@
-import 'package:easy_refresh/easy_refresh.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_mobx/flutter_mobx.dart';
-import 'package:pixez/component/pixiv_image.dart';
-import 'package:pixez/er/leader.dart';
+import 'package:pixez/i18n.dart';
+import 'package:pixez/lighting/lighting_page.dart';
 import 'package:pixez/lighting/lighting_store.dart';
+import 'package:pixez/models/illust.dart';
 import 'package:pixez/network/api_client.dart';
-import 'package:pixez/page/picture/illust_lighting_page.dart';
+import 'package:pixez/utils/illust_result_options.dart';
 
 class RecomMangaPage extends StatefulWidget {
-  const RecomMangaPage({Key? key}) : super(key: key);
+  const RecomMangaPage({super.key});
 
   @override
   State<RecomMangaPage> createState() => _RecomMangaPageState();
 }
 
 class _RecomMangaPageState extends State<RecomMangaPage> {
-  EasyRefreshController controller = EasyRefreshController(
-      controlFinishLoad: true, controlFinishRefresh: true);
-  late LightingStore _store;
+  late final ApiSource _source;
+  IllustResultSort _resultSort = IllustResultSort.apiOrder;
 
   @override
   void initState() {
-    _store = LightingStore(
-      ApiSource(
-        futureGet: () => apiClient.getMangaRecommend(),
-      ),
-    );
-    _store.fetch();
     super.initState();
+    _source = ApiSource(futureGet: apiClient.getMangaRecommend);
   }
 
-  @override
-  void dispose() {
-    super.dispose();
-  }
+  Comparator<Illusts>? get _comparator => buildIllustResultComparator<Illusts>(
+    _resultSort,
+    bookmarksOf: (illust) => illust.totalBookmarks,
+    viewsOf: (illust) => illust.totalView,
+  );
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text("Manga"),
+      appBar: AppBar(title: Text(I18n.of(context).manga)),
+      body: LightingList(
+        source: _source,
+        filter: (illust) => illust.type == 'manga',
+        comparator: _comparator,
+        showStats: true,
+        header: _buildSortControls(context),
       ),
-      extendBody: true,
-      extendBodyBehindAppBar: true,
-      body: Observer(builder: (_) {
-        return EasyRefresh(
-          controller: controller,
-          onLoad: () {
-            _store.fetchNext();
-          },
-          onRefresh: () {
-            _store.fetch();
-          },
-          child: Container(
-            child: _store.iStores.isEmpty
-                ? Container()
-                : ListView.builder(
-                    itemBuilder: (context, index) {
-                      final illust = _store.iStores[index].illusts;
-                      return Card(
-                        child: InkWell(
-                            onTap: () {
-                              Leader.push(
-                                  context, IllustLightingPage(id: illust.id));
-                            },
-                            child: PixivImage(illust!.imageUrls.medium)),
                       );
-                    },
-                    itemCount: _store.iStores.length,
+  }
+
+  Widget _buildSortControls(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.swap_vert,
+                size: 18,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
                   ),
+              const SizedBox(width: 6),
+              Text(
+                I18n.of(context).loaded_result_sort,
+                style: Theme.of(context).textTheme.labelLarge,
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                _sortChip(
+                  value: IllustResultSort.apiOrder,
+                  label: I18n.of(context).pixiv_sort,
+                  icon: Icons.format_list_numbered,
+                ),
+                const SizedBox(width: 8),
+                _sortChip(
+                  value: IllustResultSort.bookmarksDesc,
+                  label: I18n.of(context).total_bookmark,
+                  icon: Icons.bookmark_outline,
+                ),
+                const SizedBox(width: 8),
+                _sortChip(
+                  value: IllustResultSort.viewsDesc,
+                  label: I18n.of(context).total_view,
+                  icon: Icons.visibility_outlined,
+                ),
+              ],
+            ),
+          ),
+        ],
           ),
         );
-      }),
+  }
+
+  Widget _sortChip({
+    required IllustResultSort value,
+    required String label,
+    required IconData icon,
+  }) {
+    return ChoiceChip(
+      selected: _resultSort == value,
+      showCheckmark: false,
+      avatar: Icon(icon, size: 18),
+      label: Text(label),
+      onSelected: (_) {
+        if (_resultSort == value) return;
+        setState(() => _resultSort = value);
+      },
     );
   }
 }

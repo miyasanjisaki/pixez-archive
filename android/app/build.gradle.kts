@@ -55,11 +55,13 @@ if (keystorePropertiesFile.exists()) {
 }
 
 val isGooglePlay = dartEnvironmentVariables["IS_GOOGLEPLAY"] as Boolean
+val useTestSigningForRelease =
+    System.getenv("PIXEZ_TEST_SIGN_RELEASE")?.equals("true", ignoreCase = true) == true
 
 val packageName = if (isGooglePlay) {
-    "com.perol.play.pixez"
+    "com.miyasanjisaki.pixezarchive.play"
 } else {
-    "com.perol.pixez"
+    "com.miyasanjisaki.pixezarchive"
 }
 
 android {
@@ -80,8 +82,8 @@ android {
         applicationId = packageName
         minSdk = flutter.minSdkVersion
         targetSdk = 37
-        versionCode = 10010051
-        versionName = "0.9.106 X"
+        versionCode = 10010066
+        versionName = "1.0.1 X"
         buildConfigField("boolean", "IS_GOOGLEPLAY", isGooglePlay.toString())
         ndk {
             abiFilters.addAll(arrayOf("armeabi-v7a", "arm64-v8a", "x86_64"))
@@ -109,9 +111,18 @@ android {
     }
 
     buildTypes {
-        if (keystorePropertiesFile.exists()) {
-            getByName("release") {
+        getByName("release") {
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+            if (keystorePropertiesFile.exists()) {
                 signingConfig = signingConfigs.getByName("release")
+            } else if (useTestSigningForRelease) {
+                throw GradleException(
+                    "PIXEZ_TEST_SIGN_RELEASE requires android/key.properties " +
+                        "for the persistent CI test key."
+                )
             }
         }
     }

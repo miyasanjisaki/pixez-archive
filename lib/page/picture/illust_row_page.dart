@@ -1114,7 +1114,14 @@ class _IllustRowPageState extends State<IllustRowPage>
       LPrinter.d(result);
       String restrict = result['restrict'];
       List<String>? tags = result['tags'];
-      _illustStore.star(restrict: restrict, tags: tags, force: true);
+      final success = await _illustStore.star(
+        restrict: restrict,
+        tags: tags,
+        force: true,
+      );
+      if (!success && mounted) {
+        BotToast.showText(text: I18n.of(context).failed);
+      }
     }
   }
 

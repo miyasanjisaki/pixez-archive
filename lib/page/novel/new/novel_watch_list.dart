@@ -88,6 +88,7 @@ class NovelSeriesItem extends StatelessWidget {
                         data.url ?? '',
                         width: 120,
                         fit: BoxFit.fitWidth,
+                        optimizeForList: true,
                       ),
                       Positioned(
                         top: 0,

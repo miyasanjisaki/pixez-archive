@@ -19,6 +19,7 @@ import 'dart:io';
 import 'package:bot_toast/bot_toast.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_mobx/flutter_mobx.dart';
+import 'package:pixez/component/illust_stats_badge.dart';
 import 'package:pixez/component/null_hero.dart';
 import 'package:pixez/component/pixiv_image.dart';
 import 'package:pixez/component/star_icon.dart';
@@ -39,14 +40,18 @@ import 'package:pixez/utils/haptic_util.dart';
 class IllustCard extends StatefulWidget {
   final IllustStore store;
   final List<IllustStore>? iStores;
+  final List<IllustStore> Function()? iStoresProvider;
   final bool needToBan;
+  final bool showStats;
   final LightingStore lightingStore;
 
   IllustCard({
     required this.store,
     required this.lightingStore,
     this.iStores,
+    this.iStoresProvider,
     this.needToBan = false,
+    this.showStats = false,
   });
 
   @override
@@ -56,6 +61,7 @@ class IllustCard extends StatefulWidget {
 class _IllustCardState extends State<IllustCard> {
   late IllustStore store;
   late List<IllustStore>? iStores;
+  late List<IllustStore> Function()? iStoresProvider;
   late String tag;
   late LightingStore _lightingStore;
 
@@ -63,6 +69,7 @@ class _IllustCardState extends State<IllustCard> {
   void initState() {
     store = widget.store;
     iStores = widget.iStores;
+    iStoresProvider = widget.iStoresProvider;
     _lightingStore = widget.lightingStore;
     tag = this.hashCode.toString();
     super.initState();
@@ -73,6 +80,7 @@ class _IllustCardState extends State<IllustCard> {
     super.didUpdateWidget(oldWidget);
     store = widget.store;
     iStores = widget.iStores;
+    iStoresProvider = widget.iStoresProvider;
     _lightingStore = widget.lightingStore;
   }
 
@@ -148,6 +156,7 @@ class _IllustCardState extends State<IllustCard> {
             iStores: iStores!,
             store: store,
             lightingStore: _lightingStore,
+            iStoresProvider: iStoresProvider,
             heroString: tag,
           );
         },
@@ -156,8 +165,18 @@ class _IllustCardState extends State<IllustCard> {
   }
 
   Widget cardText() {
+    if (store.illusts!.type == 'manga') {
+      return Text(
+        '${I18n.of(context).manga} · ${store.illusts!.pageCount}',
+        style: const TextStyle(color: Colors.white),
+      );
+    }
     if (store.illusts!.type != "illust") {
-      return Text(store.illusts!.type, style: TextStyle(color: Colors.white));
+      final typeLabel = switch (store.illusts!.type) {
+        'ugoira' => I18n.of(context).ugoira_filter,
+        final type => type,
+      };
+      return Text(typeLabel, style: const TextStyle(color: Colors.white));
     }
     if (store.illusts!.metaPages.isNotEmpty) {
       return Text(
@@ -186,6 +205,7 @@ class _IllustCardState extends State<IllustCard> {
             child: PixivImage(
               store.illusts!.imageUrls.squareMedium,
               fit: BoxFit.fitWidth,
+              optimizeForList: true,
             ),
           )
         : NullHero(
@@ -194,6 +214,7 @@ class _IllustCardState extends State<IllustCard> {
               url,
               fit: BoxFit.fitWidth,
               cacheHeaderData: PixEzCacheHeaderData(key: tag, quality: quality),
+              optimizeForList: true,
             ),
           );
   }
@@ -205,9 +226,18 @@ class _IllustCardState extends State<IllustCard> {
         ? 1.0
         : store.illusts!.width.toDouble() / store.illusts!.height.toDouble();
     return Card(
-      margin: EdgeInsets.all(8.0),
+      margin: const EdgeInsets.all(6),
+      elevation: 0,
       clipBehavior: Clip.antiAlias,
-      color: Theme.of(context).colorScheme.surface,
+      color: Theme.of(context).colorScheme.surfaceContainerLow,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(
+          color: Theme.of(
+            context,
+          ).colorScheme.outlineVariant.withValues(alpha: 0.55),
+        ),
+      ),
       child: _buildAnimationWraper(
         context,
         Column(
@@ -229,6 +259,15 @@ class _IllustCardState extends State<IllustCard> {
                       ],
                     ),
                   ),
+                  if (widget.showStats)
+                    Positioned(
+                      left: 8,
+                      bottom: 8,
+                      child: IllustStatsBadge(
+                        bookmarks: store.illusts!.totalBookmarks,
+                        views: store.illusts!.totalView,
+                      ),
+                    ),
                   // Positioned(
                   //   top: 0,
                   //   left: 0,
@@ -276,11 +315,11 @@ class _IllustCardState extends State<IllustCard> {
   Widget _buildAIBadge() {
     return Container(
       decoration: BoxDecoration(
-        color: Colors.black26,
-        borderRadius: BorderRadius.all(Radius.circular(4.0)),
+        color: Colors.black.withValues(alpha: 0.72),
+        borderRadius: const BorderRadius.all(Radius.circular(8)),
       ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 2.0, horizontal: 2.0),
+      child: const Padding(
+        padding: EdgeInsets.symmetric(vertical: 3, horizontal: 6),
         child: Text("AI", style: TextStyle(color: Colors.white)),
       ),
     );
@@ -335,6 +374,7 @@ class _IllustCardState extends State<IllustCard> {
               store: store,
               lightingStore: _lightingStore,
               iStores: iStores!,
+              iStoresProvider: iStoresProvider,
             );
           }
           return IllustLightingPage(
@@ -364,14 +404,14 @@ class _IllustCardState extends State<IllustCard> {
                 Text(
                   store.illusts!.title,
                   maxLines: 1,
-                  overflow: TextOverflow.clip,
+                  overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.bodyMedium,
                   strutStyle: StrutStyle(forceStrutHeight: true, leading: 0),
                 ),
                 Text(
                   store.illusts!.user.name,
                   maxLines: 1,
-                  overflow: TextOverflow.clip,
+                  overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.bodySmall,
                   strutStyle: StrutStyle(forceStrutHeight: true, leading: 0),
                 ),
@@ -439,7 +479,14 @@ class _IllustCardState extends State<IllustCard> {
                   LPrinter.d(result);
                   String restrict = result['restrict'];
                   List<String>? tags = result['tags'];
-                  store.star(restrict: restrict, tags: tags, force: true);
+                  final success = await store.star(
+                    restrict: restrict,
+                    tags: tags,
+                    force: true,
+                  );
+                  if (!success && context.mounted) {
+                    BotToast.showText(text: I18n.of(context).failed);
+                  }
                 }
               },
             ),
@@ -457,18 +504,15 @@ class _IllustCardState extends State<IllustCard> {
       child: Align(
         alignment: Alignment.topRight,
         child: Padding(
-          padding: EdgeInsets.all(4.0),
+          padding: const EdgeInsets.all(4),
           child: Container(
             child: Padding(
-              padding: const EdgeInsets.symmetric(
-                vertical: 2.0,
-                horizontal: 2.0,
-              ),
+              padding: const EdgeInsets.symmetric(vertical: 3, horizontal: 6),
               child: cardText(),
             ),
             decoration: BoxDecoration(
-              color: Colors.black26,
-              borderRadius: BorderRadius.all(Radius.circular(4.0)),
+              color: Colors.black.withValues(alpha: 0.72),
+              borderRadius: const BorderRadius.all(Radius.circular(8)),
             ),
           ),
         ),

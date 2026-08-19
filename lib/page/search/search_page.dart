@@ -15,21 +15,18 @@
  */
 
 import 'dart:math';
-import 'package:bot_toast/bot_toast.dart';
 import 'package:flutter/material.dart' hide SearchBar;
 import 'package:flutter_mobx/flutter_mobx.dart';
 import 'package:pixez/component/pixiv_image.dart';
-import 'package:pixez/er/leader.dart';
 import 'package:pixez/i18n.dart';
 import 'package:pixez/main.dart';
 import 'package:pixez/models/tags.dart';
 import 'package:pixez/page/picture/illust_lighting_page.dart';
+import 'package:pixez/page/saucenao/reverse_image_search_panel.dart';
 import 'package:pixez/page/saucenao/sauce_store.dart';
 import 'package:pixez/page/search/result_page.dart';
 import 'package:pixez/page/search/search_bar.dart';
-import 'package:pixez/page/search/suggest/search_suggestion_page.dart';
 import 'package:pixez/page/search/trend_tags_store.dart';
-import 'package:pixez/page/webview/saucenao_webview_page.dart';
 import 'package:pixez/utils/haptic_util.dart';
 
 class SearchPage extends StatefulWidget {
@@ -46,6 +43,7 @@ class _SearchPageState extends State<SearchPage>
   late AnimationController _animationController;
   late Animation<double> animation;
   late SauceStore _sauceStore;
+  int _searchSection = 0;
 
   @override
   void didChangeDependencies() {
@@ -56,24 +54,20 @@ class _SearchPageState extends State<SearchPage>
   @override
   void initState() {
     _animationController = AnimationController(
-        duration: const Duration(milliseconds: 500), vsync: this);
+      duration: const Duration(milliseconds: 500),
+      vsync: this,
+    );
     animation = Tween(begin: 0.0, end: 0.25).animate(_animationController);
 
     _trendTagsStore = TrendTagsStore();
-    _tabController = TabController(length: 3, vsync: this);
-    _sauceStore = SauceStore();
-    _sauceStore.observableStream.listen((event) {
-      if (event != null && _sauceStore.results.isNotEmpty) {
-        Navigator.of(context).push(MaterialPageRoute(
-            builder: (context) => PageView(
-                  children: _sauceStore.results
-                      .map((element) => IllustLightingPage(id: element))
-                      .toList(),
-                )));
-      } else {
-        BotToast.showText(text: I18n.ofContext().no_result);
+    _tabController = TabController(length: 2, vsync: this);
+    _tabController.addListener(() {
+      if (!mounted || _tabController.indexIsChanging) return;
+      if (_searchSection != _tabController.index) {
+        setState(() => _searchSection = _tabController.index);
       }
     });
+    _sauceStore = SauceStore();
     super.initState();
     tagHistoryStore.fetch();
     _trendTagsStore.fetch();
@@ -98,9 +92,10 @@ class _SearchPageState extends State<SearchPage>
               child: Text(
                 I18n.of(context).search,
                 style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 30.0,
-                    color: Theme.of(context).textTheme.titleLarge!.color),
+                  fontWeight: FontWeight.bold,
+                  fontSize: 30.0,
+                  color: Theme.of(context).textTheme.titleLarge!.color,
+                ),
               ),
               padding: EdgeInsets.only(left: 16.0, bottom: 10.0),
             ),
@@ -115,54 +110,71 @@ class _SearchPageState extends State<SearchPage>
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    return LayoutBuilder(builder: (context, snapshot) {
-      return Observer(builder: (_) {
-        if (accountStore.now != null)
+    return LayoutBuilder(
+      builder: (context, snapshot) {
+        return Column(
+          children: [
+            SafeArea(
+              bottom: false,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+                child: TabBar(
+                  controller: _tabController,
+                  onTap: (index) => setState(() => _searchSection = index),
+                  tabs: [
+                    Tab(
+                      icon: const Icon(Icons.tag),
+                      text: I18n.of(context).tag,
+                    ),
+                    Tab(
+                      icon: const Icon(Icons.image_search),
+                      text: I18n.of(context).image_search,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            Expanded(
+              child: IndexedStack(
+                index: _searchSection,
+                children: [
+                  _buildTagSearchSection(context, snapshot),
+                  ReverseImageSearchPanel(store: _sauceStore),
+                ],
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildTagSearchSection(BuildContext context, BoxConstraints snapshot) {
+    return Observer(
+      builder: (_) {
+        if (accountStore.now != null) {
           return NestedScrollView(
             body: _buildContent(context, snapshot),
             headerSliverBuilder:
-                (BuildContext context, bool innerBoxIsScrolled) {
-              return [
-                SliverToBoxAdapter(
-                  child: Container(height: MediaQuery.of(context).padding.top),
-                ),
-                SliverToBoxAdapter(
-                  child: SearchBar(
-                    onSaucenao: () {
-                      if (userSetting.useSaunceNaoWebview) {
-                        Leader.push(context, SauncenaoWebview());
-                      } else {
-                        _sauceStore.findImage(context: context);
-                      }
-                    },
+                (BuildContext context, bool innerBoxIsScrolled) => [
+                  SliverToBoxAdapter(
+                    child: SearchBar(
+                      onSaucenao: () => _tabController.animateTo(1),
+                    ),
                   ),
-                )
-              ];
-            },
+                ],
           );
-        return Column(children: <Widget>[
-          AppBar(
-            automaticallyImplyLeading: false,
-            title: Text(
-              I18n.of(context).search,
-              style: Theme.of(context).textTheme.titleLarge,
+        }
+        return Column(
+          children: <Widget>[
+            SearchBar(onSaucenao: () => _tabController.animateTo(1)),
+            Expanded(
+              child: Center(child: Text(I18n.of(context).login_message)),
             ),
-            actions: <Widget>[
-              IconButton(
-                icon: Icon(
-                  Icons.search,
-                ),
-                onPressed: () {
-                  Navigator.of(context, rootNavigator: true).push(
-                      MaterialPageRoute(
-                          builder: (context) => SearchSuggestionPage()));
-                },
-              )
-            ],
-          ),
-        ]);
-      });
-    });
+          ],
+        );
+      },
+    );
   }
 
   Widget _buildContent(BuildContext context, BoxConstraints snapshot) {
@@ -173,35 +185,37 @@ class _SearchPageState extends State<SearchPage>
       },
       child: CustomScrollView(
         slivers: [
+          SliverToBoxAdapter(child: _buildFirstRow(context)),
           SliverToBoxAdapter(
-            child: _buildFirstRow(context),
-          ),
-          SliverToBoxAdapter(
-            child: Observer(builder: (context) {
-              if (tagHistoryStore.tags
-                  .where((element) => element.type == null || element.type == 0)
-                  .isNotEmpty)
-                return Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Text(
-                        I18n.of(context).history,
-                        style: TextStyle(
+            child: Observer(
+              builder: (context) {
+                if (tagHistoryStore.tags
+                    .where(
+                      (element) => element.type == null || element.type == 0,
+                    )
+                    .isNotEmpty)
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(
+                          I18n.of(context).history,
+                          style: TextStyle(
                             fontSize: 16.0,
-                            color: Theme.of(context)
-                                .textTheme
-                                .headlineSmall!
-                                .color),
-                      ),
-                    ],
-                  ),
-                );
-              else
-                return Container();
-            }),
+                            color: Theme.of(
+                              context,
+                            ).textTheme.headlineSmall!.color,
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                else
+                  return Container();
+              },
+            ),
           ),
           SliverPadding(
             padding: EdgeInsets.symmetric(horizontal: 8),
@@ -210,8 +224,10 @@ class _SearchPageState extends State<SearchPage>
                 builder: (BuildContext context) {
                   if (tagHistoryStore.tags.isNotEmpty) {
                     final targetTags = tagHistoryStore.tags
-                        .where((element) =>
-                            element.type == null || element.type == 0)
+                        .where(
+                          (element) =>
+                              element.type == null || element.type == 0,
+                        )
                         .toList();
                     if (targetTags.length > 20) {
                       final resultTags = targetTags.sublist(0, 12);
@@ -222,22 +238,27 @@ class _SearchPageState extends State<SearchPage>
                             for (var f in _tagExpand ? targetTags : resultTags)
                               buildActionChip(f, context),
                             ActionChip(
-                                label: AnimatedSwitcher(
-                                  duration: Duration(milliseconds: 300),
-                                  transitionBuilder: (child, anim) {
-                                    return ScaleTransition(
-                                        child: child, scale: anim);
-                                  },
-                                  child: Icon(!_tagExpand
+                              label: AnimatedSwitcher(
+                                duration: Duration(milliseconds: 300),
+                                transitionBuilder: (child, anim) {
+                                  return ScaleTransition(
+                                    child: child,
+                                    scale: anim,
+                                  );
+                                },
+                                child: Icon(
+                                  !_tagExpand
                                       ? Icons.expand_more
-                                      : Icons.expand_less),
+                                      : Icons.expand_less,
                                 ),
-                                padding: EdgeInsets.all(0.0),
-                                onPressed: () {
-                                  setState(() {
-                                    _tagExpand = !_tagExpand;
-                                  });
-                                })
+                              ),
+                              padding: EdgeInsets.all(0.0),
+                              onPressed: () {
+                                setState(() {
+                                  _tagExpand = !_tagExpand;
+                                });
+                              },
+                            ),
                           ],
                           runSpacing: 0.0,
                           spacing: 5.0,
@@ -261,63 +282,70 @@ class _SearchPageState extends State<SearchPage>
             ),
           ),
           SliverToBoxAdapter(
-            child: Observer(builder: (context) {
-              if (tagHistoryStore.tags
-                  .where((element) => element.type == null || element.type == 0)
-                  .isNotEmpty)
-                return InkWell(
-                  onTap: () {
-                    showDialog(
+            child: Observer(
+              builder: (context) {
+                if (tagHistoryStore.tags
+                    .where(
+                      (element) => element.type == null || element.type == 0,
+                    )
+                    .isNotEmpty)
+                  return InkWell(
+                    onTap: () {
+                      showDialog(
                         context: context,
                         builder: (context) {
                           return AlertDialog(
                             title: Text(I18n.of(context).clean_history),
                             actions: [
                               TextButton(
-                                  onPressed: () {
-                                    Navigator.of(context).pop();
-                                  },
-                                  child: Text(I18n.of(context).cancel)),
+                                onPressed: () {
+                                  Navigator.of(context).pop();
+                                },
+                                child: Text(I18n.of(context).cancel),
+                              ),
                               TextButton(
-                                  onPressed: () {
-                                    tagHistoryStore.deleteAll();
-                                    Navigator.of(context).pop();
-                                  },
-                                  child: Text(I18n.of(context).ok))
+                                onPressed: () {
+                                  tagHistoryStore.deleteAll();
+                                  Navigator.of(context).pop();
+                                },
+                                child: Text(I18n.of(context).ok),
+                              ),
                             ],
                           );
-                        });
-                  },
-                  child: Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(8.0),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        children: [
-                          Icon(
-                            Icons.delete_outline,
-                            size: 18.0,
-                            color: Theme.of(context).textTheme.bodySmall!.color,
-                          ),
-                          Text(
-                            I18n.of(context).clear_search_tag_history,
-                            style: Theme.of(context)
-                                .textTheme
-                                .bodyMedium!
-                                .copyWith(
-                                    color: Theme.of(context)
-                                        .textTheme
-                                        .bodySmall!
-                                        .color),
-                          )
-                        ],
+                        },
+                      );
+                    },
+                    child: Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(8.0),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.delete_outline,
+                              size: 18.0,
+                              color: Theme.of(
+                                context,
+                              ).textTheme.bodySmall!.color,
+                            ),
+                            Text(
+                              I18n.of(context).clear_search_tag_history,
+                              style: Theme.of(context).textTheme.bodyMedium!
+                                  .copyWith(
+                                    color: Theme.of(
+                                      context,
+                                    ).textTheme.bodySmall!.color,
+                                  ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
-                  ),
-                );
-              return Container();
-            }),
+                  );
+                return Container();
+              },
+            ),
           ),
           SliverToBoxAdapter(
             child: Padding(
@@ -325,8 +353,9 @@ class _SearchPageState extends State<SearchPage>
               child: Text(
                 I18n.of(context).recommand_tag,
                 style: TextStyle(
-                    fontSize: 16.0,
-                    color: Theme.of(context).textTheme.titleLarge!.color),
+                  fontSize: 16.0,
+                  color: Theme.of(context).textTheme.titleLarge!.color,
+                ),
               ),
             ),
           ),
@@ -334,78 +363,91 @@ class _SearchPageState extends State<SearchPage>
             SliverPadding(
               padding: EdgeInsets.all(8.0),
               sliver: SliverGrid(
-                  delegate: SliverChildBuilderDelegate((context, index) {
-                    final tags = _trendTagsStore.trendTags;
-                    return GestureDetector(
-                      onTap: () {
-                        Navigator.of(context, rootNavigator: true)
-                            .push(MaterialPageRoute(builder: (_) {
-                          return ResultPage(
-                            word: tags[index].tag,
-                          );
-                        }));
-                      },
-                      onLongPress: () {
-                        Navigator.of(context, rootNavigator: true)
-                            .push(MaterialPageRoute(builder: (_) {
-                          return IllustLightingPage(id: tags[index].illust.id);
-                        }));
-                      },
-                      child: Card(
-                        clipBehavior: Clip.antiAlias,
-                        shape: const RoundedRectangleBorder(
-                            borderRadius:
-                                BorderRadius.all(Radius.circular(8.0))),
-                        child: Stack(
-                          children: <Widget>[
-                            PixivImage(
+                delegate: SliverChildBuilderDelegate((context, index) {
+                  final tags = _trendTagsStore.trendTags;
+                  return GestureDetector(
+                    onTap: () {
+                      Navigator.of(context, rootNavigator: true).push(
+                        MaterialPageRoute(
+                          builder: (_) {
+                            return ResultPage(word: tags[index].tag);
+                          },
+                        ),
+                      );
+                    },
+                    onLongPress: () {
+                      Navigator.of(context, rootNavigator: true).push(
+                        MaterialPageRoute(
+                          builder: (_) {
+                            return IllustLightingPage(
+                              id: tags[index].illust.id,
+                            );
+                          },
+                        ),
+                      );
+                    },
+                    child: Card(
+                      elevation: 0,
+                      clipBehavior: Clip.antiAlias,
+                      shape: const RoundedRectangleBorder(
+                        borderRadius: BorderRadius.all(Radius.circular(8.0)),
+                      ),
+                      child: Stack(
+                        children: <Widget>[
+                          Positioned.fill(
+                            child: PixivImage(
                               tags[index].illust.imageUrls.squareMedium,
                               fit: BoxFit.cover,
+                              optimizeForList: true,
                             ),
-                            Opacity(
-                              opacity: 0.4,
-                              child: Container(
-                                decoration: BoxDecoration(color: Colors.black),
-                              ),
-                            ),
-                            Align(
-                              child: Padding(
-                                padding: const EdgeInsets.all(2.0),
-                                child: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: <Widget>[
+                          ),
+                          const Positioned.fill(
+                            child: ColoredBox(color: Color(0x66000000)),
+                          ),
+                          Align(
+                            child: Padding(
+                              padding: const EdgeInsets.all(2.0),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: <Widget>[
+                                  Text(
+                                    "#${tags[index].tag}",
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                  if (tags[index].translatedName != null &&
+                                      tags[index].translatedName!.isNotEmpty)
                                     Text(
-                                      "#${tags[index].tag}",
+                                      tags[index].translatedName!,
                                       textAlign: TextAlign.center,
                                       style: TextStyle(
-                                          color: Colors.white, fontSize: 12),
-                                    ),
-                                    if (tags[index].translatedName != null &&
-                                        tags[index].translatedName!.isNotEmpty)
-                                      Text(
-                                        tags[index].translatedName!,
-                                        textAlign: TextAlign.center,
-                                        style: TextStyle(
-                                            color: Colors.white, fontSize: 10),
+                                        color: Colors.white,
+                                        fontSize: 10,
                                       ),
-                                  ],
-                                ),
+                                    ),
+                                ],
                               ),
-                              alignment: Alignment.bottomCenter,
                             ),
-                          ],
-                        ),
+                            alignment: Alignment.bottomCenter,
+                          ),
+                        ],
                       ),
-                    );
-                  }, childCount: _trendTagsStore.trendTags.length),
-                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: rowCount)),
+                    ),
+                  );
+                }, childCount: _trendTagsStore.trendTags.length),
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: rowCount,
+                ),
+              ),
             ),
           SliverToBoxAdapter(
             child: Container(
               height: (MediaQuery.of(context).size.width / 3) - 16,
             ),
-          )
+          ),
         ],
       ),
     );
@@ -416,38 +458,39 @@ class _SearchPageState extends State<SearchPage>
       onLongPress: () {
         HapticUtil.heavy();
         showDialog(
-            context: context,
-            builder: (context) {
-              return AlertDialog(
-                title: Text('${I18n.of(context).delete}?'),
-                actions: [
-                  TextButton(
-                      onPressed: () {
-                        tagHistoryStore.delete(f.id!);
-                        Navigator.of(context).pop();
-                      },
-                      child: Text(I18n.of(context).ok)),
-                  TextButton(
-                      onPressed: () {
-                        Navigator.of(context).pop();
-                      },
-                      child: Text(I18n.of(context).cancel)),
-                ],
-              );
-            });
+          context: context,
+          builder: (context) {
+            return AlertDialog(
+              title: Text('${I18n.of(context).delete}?'),
+              actions: [
+                TextButton(
+                  onPressed: () {
+                    tagHistoryStore.delete(f.id!);
+                    Navigator.of(context).pop();
+                  },
+                  child: Text(I18n.of(context).ok),
+                ),
+                TextButton(
+                  onPressed: () {
+                    Navigator.of(context).pop();
+                  },
+                  child: Text(I18n.of(context).cancel),
+                ),
+              ],
+            );
+          },
+        );
       },
       child: ActionChip(
         padding: EdgeInsets.all(0.0),
-        label: Text(
-          f.name,
-          style: TextStyle(fontSize: 12.0),
-        ),
+        label: Text(f.name, style: TextStyle(fontSize: 12.0)),
         onPressed: () {
-          Navigator.of(context, rootNavigator: true).push(MaterialPageRoute(
-              builder: (context) => ResultPage(
-                    word: f.name,
-                    translatedName: f.translatedName,
-                  )));
+          Navigator.of(context, rootNavigator: true).push(
+            MaterialPageRoute(
+              builder: (context) =>
+                  ResultPage(word: f.name, translatedName: f.translatedName),
+            ),
+          );
         },
       ),
     );

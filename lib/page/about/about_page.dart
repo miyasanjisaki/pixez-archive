@@ -14,21 +14,14 @@
  *
  */
 
-import 'dart:async';
 import 'dart:io';
 
-import 'package:bot_toast/bot_toast.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_mobx/flutter_mobx.dart';
-import 'package:font_awesome_flutter/font_awesome_flutter.dart';
-import 'package:in_app_purchase/in_app_purchase.dart';
-import 'package:in_app_purchase_storekit/store_kit_wrappers.dart';
 import 'package:pixez/component/new_version_chip.dart';
 import 'package:pixez/constants.dart';
 import 'package:pixez/i18n.dart';
-import 'package:pixez/page/about/contributors.dart';
-import 'package:pixez/page/about/thanks_list.dart';
 import 'package:pixez/page/about/update_page.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher_string.dart';
@@ -43,69 +36,20 @@ class AboutPage extends StatefulWidget {
 }
 
 class _AboutPageState extends State<AboutPage> {
+  static const _archiveRepositoryUrl =
+      'https://github.com/miyasanjisaki/pixez-archive';
+  static const _upstreamRepositoryUrl =
+      'https://github.com/Notsfsssf/pixez-flutter';
+  static const _archiveIssuesUrl =
+      'https://github.com/miyasanjisaki/pixez-archive/issues';
+  static const _feedbackEmail = '429230857@qq.com';
+
   late bool hasNewVersion;
-  StreamSubscription<List<PurchaseDetails>>? _subscription;
-  List<ProductDetails> products = [];
 
   @override
   void initState() {
-    initIap();
     hasNewVersion = widget.newVersion ?? false;
     super.initState();
-  }
-
-  initIap() async {
-    if (!Constants.isGooglePlay && !Platform.isIOS) return;
-    final Stream purchaseUpdated = InAppPurchase.instance.purchaseStream;
-    _subscription =
-        purchaseUpdated.listen(
-              (purchaseDetailsList) {
-                _listenToPurchaseUpdated(purchaseDetailsList);
-              },
-              onDone: () {
-                _subscription?.cancel();
-              },
-              onError: (error) {},
-            )
-            as StreamSubscription<List<PurchaseDetails>>?;
-    const Set<String> _kIds = <String>{'support', 'support1'};
-    final ProductDetailsResponse response = await InAppPurchase.instance
-        .queryProductDetails(_kIds);
-    if (response.notFoundIDs.isNotEmpty) {}
-    List<ProductDetails> pDetails = response.productDetails;
-    products.clear();
-    products.addAll(pDetails);
-    if (Platform.isIOS && products.isNotEmpty) {
-      try {
-        var transactions = await SKPaymentQueueWrapper().transactions();
-        transactions.forEach((skPaymentTransactionWrapper) {
-          SKPaymentQueueWrapper().finishTransaction(
-            skPaymentTransactionWrapper,
-          );
-        });
-      } catch (e) {}
-    }
-  }
-
-  void _listenToPurchaseUpdated(List<PurchaseDetails> purchaseDetailsList) {
-    purchaseDetailsList.forEach((PurchaseDetails purchaseDetails) async {
-      if (purchaseDetails.status == PurchaseStatus.pending) {
-      } else {
-        if (purchaseDetails.status == PurchaseStatus.error) {
-        } else if (purchaseDetails.status == PurchaseStatus.purchased ||
-            purchaseDetails.status == PurchaseStatus.restored) {
-          BotToast.showText(text: "Thanks");
-        }
-        if (purchaseDetails.pendingCompletePurchase) {
-          await InAppPurchase.instance.completePurchase(purchaseDetails);
-        }
-      }
-    });
-  }
-
-  @override
-  void dispose() {
-    super.dispose();
   }
 
   @override
@@ -163,77 +107,18 @@ class _AboutPageState extends State<AboutPage> {
             ),
             ListTile(
               leading: CircleAvatar(
-                backgroundImage: AssetImage('assets/images/right_now.jpg'),
+                backgroundImage: NetworkImage(
+                  'https://github.com/miyasanjisaki.png',
+                ),
               ),
-              title: Text('Right now'),
-              subtitle: Text(I18n.of(context).right_now_message),
-              onTap: () {
-                showModalBottomSheet(
-                  context: context,
-                  builder: (BuildContext context) {
-                    return Container(
-                      height: 200.0,
-                      child: Center(child: Text("这里空空的，这个设计师显然没有什么话要说")),
-                    );
-                  },
-                );
+              title: Text('miyasanjisaki'),
+              subtitle: Text(I18n.of(context).archive_maintainer_message),
+              trailing: Icon(Icons.open_in_new),
+              onTap: () async {
+                try {
+                  await launchUrlString(_archiveRepositoryUrl);
+                } catch (_) {}
               },
-            ),
-            Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Text('Contributors'),
-            ),
-            Container(
-              height: 142,
-              padding: EdgeInsets.only(left: 8.0),
-              child: ListView.builder(
-                shrinkWrap: true,
-                itemCount: contributors.length,
-                scrollDirection: Axis.horizontal,
-                itemBuilder: (context, index) {
-                  final data = contributors[index];
-                  return Card(
-                    child: InkWell(
-                      onTap: () async {
-                        try {
-                          if (data.onPressed == null) return;
-                          await data.onPressed!(context);
-                        } catch (e) {}
-                      },
-                      child: Container(
-                        width: 80,
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.center,
-                          children: [
-                            Column(
-                              children: [
-                                Container(height: 8),
-                                CircleAvatar(
-                                  backgroundImage: NetworkImage(data.avatar),
-                                ),
-                                Padding(
-                                  padding: const EdgeInsets.all(8.0),
-                                  child: Text(
-                                    data.name,
-                                    textAlign: TextAlign.center,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            Padding(
-                              padding: const EdgeInsets.all(8.0),
-                              child: Text(
-                                data.content,
-                                textAlign: TextAlign.center,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  );
-                },
-              ),
             ),
             ListTile(
               leading: Icon(Icons.rate_review),
@@ -252,7 +137,7 @@ class _AboutPageState extends State<AboutPage> {
               ListTile(
                 leading: Icon(Icons.device_hub),
                 title: Text(I18n.of(context).repo_address),
-                subtitle: Text('github.com/Notsfsssf/pixez-flutter'),
+                subtitle: Text('github.com/miyasanjisaki/pixez-archive'),
                 trailing: Visibility(
                   child: NewVersionChip(),
                   visible: hasNewVersion,
@@ -278,21 +163,32 @@ class _AboutPageState extends State<AboutPage> {
                                 ),
                                 onTap: () {
                                   try {
-                                    launchUrlString(
-                                      'https://github.com/Notsfsssf/pixez-flutter',
-                                    );
+                                    launchUrlString(_archiveRepositoryUrl);
                                   } catch (e) {}
                                 },
                                 trailing: IconButton(
                                   icon: Icon(Icons.link),
                                   onPressed: () {
                                     try {
-                                      launchUrlString(
-                                        'https://github.com/Notsfsssf/pixez-flutter',
-                                      );
+                                      launchUrlString(_archiveRepositoryUrl);
                                     } catch (e) {}
                                   },
                                 ),
+                              ),
+                              ListTile(
+                                leading: Icon(Icons.fork_right),
+                                title: Text('PixEz Flutter upstream'),
+                                subtitle: Text(
+                                  'github.com/Notsfsssf/pixez-flutter',
+                                ),
+                                trailing: Icon(Icons.open_in_new),
+                                onTap: () async {
+                                  try {
+                                    await launchUrlString(
+                                      _upstreamRepositoryUrl,
+                                    );
+                                  } catch (_) {}
+                                },
                               ),
                               ListTile(
                                 title: Text(I18n.of(context).check_for_updates),
@@ -305,17 +201,6 @@ class _AboutPageState extends State<AboutPage> {
                                 },
                                 trailing: Icon(Icons.update),
                               ),
-                              ListTile(
-                                leading: CircleAvatar(
-                                  backgroundImage: NetworkImage(
-                                    'https://avatars1.githubusercontent.com/u/9017470?s=400&v=4',
-                                  ),
-                                ),
-                                title: Text('Skimige'),
-                                subtitle: Text(
-                                  I18n.of(context).skimige_message,
-                                ),
-                              ),
                             ],
                           ),
                         );
@@ -324,157 +209,46 @@ class _AboutPageState extends State<AboutPage> {
                 },
               ),
             ],
-            Visibility(
-              visible: false,
-              child: ListTile(
-                leading: Icon(Icons.home),
-                title: Text('GitHub Page'),
-                subtitle: Text('https://github.com/Notsfsssf'),
-                onTap: () async {},
-              ),
-            ),
             ListTile(
               leading: Icon(Icons.email),
               title: Text(I18n.of(context).feedback),
-              subtitle: Text('PxezFeedBack@outlook.com'),
+              subtitle: Text(_feedbackEmail),
+              onTap: () async {
+                try {
+                  await launchUrlString('mailto:$_feedbackEmail');
+                } catch (_) {}
+              },
             ),
             ListTile(
               leading: Icon(Icons.stars),
               title: Text(I18n.of(context).support),
-              subtitle: Text(I18n.of(context).support_message),
+              subtitle: Text('PixEz Archive 项目与问题反馈'),
+              onTap: () async {
+                try {
+                  await launchUrlString(_archiveIssuesUrl);
+                } catch (_) {}
+              },
             ),
             ListTile(
               leading: Icon(Icons.favorite),
               title: Text(I18n.of(context).thanks),
-              subtitle: Text('感谢帮助我测试的弹幕委员会群友们\n感谢pixiv cat站主提供的图床'),
-              onTap: () {
-                if (Platform.isAndroid)
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) =>
-                          Scaffold(appBar: AppBar(), body: ThanksList()),
-                    ),
-                  );
+              subtitle: Text('感谢上游 PixEz 的作者与贡献者\n感谢 pixiv.cat 提供的图床'),
+              onTap: () async {
+                try {
+                  await launchUrlString(_upstreamRepositoryUrl);
+                } catch (_) {}
               },
             ),
             ListTile(
               leading: Icon(Icons.share),
               title: Text(I18n.of(context).share),
-              subtitle: Text(I18n.of(context).share_this_app_link),
+              subtitle: Text('分享我的 GitHub 项目'),
               onTap: () {
-                if (Platform.isIOS) {
-                  SharePlus.instance.share(
-                    ShareParams(
-                      text: 'https://apps.apple.com/cn/app/pixez/id1494435126',
-                    ),
-                  );
-                }
+                SharePlus.instance.share(
+                  ShareParams(text: _archiveRepositoryUrl),
+                );
               },
             ),
-            ListTile(
-              leading: FaIcon(FontAwesomeIcons.telegram),
-              title: Text("Group"),
-              subtitle: Text('t.me/PixEzChannel'),
-            ),
-            if (Platform.isAndroid && !Constants.isGooglePlay) ...[
-              ListTile(
-                title: Text(I18n.of(context).donate_title),
-                subtitle: Text(I18n.of(context).donate_message),
-              ),
-              Card(
-                child: ListTile(
-                  title: Text('AliPay'),
-                  subtitle: Text('912756674@qq.com'),
-                  onTap: () async {},
-                ),
-              ),
-              Card(
-                child: ListTile(
-                  title: Text('Wechat Pay'),
-                  subtitle: Text('tap'),
-                  onTap: () async {
-                    showDialog(
-                      context: context,
-                      builder: (_) {
-                        return AlertDialog(
-                          content: Image.asset(
-                            'assets/images/weixin_qr.png',
-                            width: 300,
-                            height: 300,
-                          ),
-                        );
-                      },
-                    );
-                  },
-                ),
-              ),
-            ],
-            if (Platform.isIOS) ...[
-              Card(
-                child: ListTile(
-                  subtitle: Text('如果你觉得这个应用还不错，支持一下开发者吧!'),
-                  title: Text('支持开发者工作'),
-                  trailing: Text('12￥'),
-                  onTap: () async {
-                    BotToast.showText(text: 'try to Purchase');
-                    for (var p in products) {
-                      if (p.id == "support") {
-                        final PurchaseParam purchaseParam = PurchaseParam(
-                          productDetails: p,
-                        );
-                        InAppPurchase.instance.buyConsumable(
-                          purchaseParam: purchaseParam,
-                        );
-                        break;
-                      }
-                    }
-                  },
-                ),
-              ),
-              Card(
-                child: ListTile(
-                  subtitle: Text('如果你觉得这个应用非常不错，支持一下开发者吧！'),
-                  title: Text('支持开发者工作'),
-                  trailing: Text('25￥'),
-                  onTap: () async {
-                    BotToast.showText(text: 'try to Purchase');
-                    for (var p in products) {
-                      if (p.id == "support1") {
-                        final PurchaseParam purchaseParam = PurchaseParam(
-                          productDetails: p,
-                        );
-                        InAppPurchase.instance.buyConsumable(
-                          purchaseParam: purchaseParam,
-                        );
-                        break;
-                      }
-                    }
-                  },
-                ),
-              ),
-            ],
-            if (!Platform.isIOS &&
-                products.isNotEmpty &&
-                Constants.isGooglePlay)
-              for (var i in products)
-                Card(
-                  margin: EdgeInsets.all(8.0),
-                  elevation: 1.0,
-                  child: ListTile(
-                    leading: FaIcon(FontAwesomeIcons.mugSaucer),
-                    title: Text(i.description),
-                    subtitle: Text(i.price),
-                    onTap: () {
-                      BotToast.showText(text: 'try to Purchase');
-                      final PurchaseParam purchaseParam = PurchaseParam(
-                        productDetails: i,
-                      );
-                      InAppPurchase.instance.buyConsumable(
-                        purchaseParam: purchaseParam,
-                      );
-                    },
-                  ),
-                ),
           ],
         );
       },

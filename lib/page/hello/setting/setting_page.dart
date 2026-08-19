@@ -32,7 +32,6 @@ import 'package:pixez/page/about/about_page.dart';
 import 'package:pixez/page/account/edit/account_edit_page.dart';
 import 'package:pixez/page/account/select/account_select_page.dart';
 import 'package:pixez/page/board/board_page.dart';
-import 'package:pixez/page/book/tag/book_tag_page.dart';
 import 'package:pixez/page/hello/recom/recom_manga_page.dart';
 import 'package:pixez/page/hello/setting/data_export_page.dart';
 import 'package:pixez/page/hello/setting/setting_quality_page.dart';
@@ -226,12 +225,6 @@ class _SettingPageState extends State<SettingPage> {
                       },
                     ),
                     ListTile(
-                      leading: Icon(Icons.bookmark),
-                      title: Text(I18n.of(context).favorited_tag),
-                      onTap: () =>
-                          Leader.pushWithScaffold(context, BookTagPage()),
-                    ),
-                    ListTile(
                       leading: Icon(Icons.block),
                       title: Text(I18n.of(context).shielding_settings),
                       onTap: () => Leader.push(context, ShieldPage()),
@@ -260,7 +253,7 @@ class _SettingPageState extends State<SettingPage> {
                       leading: Icon(Icons.book),
                       title: Text(I18n.of(context).novel),
                       onTap: () => Navigator.of(context, rootNavigator: true)
-                          .pushReplacement(MaterialPageRoute(
+                          .push(MaterialPageRoute(
                               builder: (context) => NovelRail())),
                     ),
                     ListTile(

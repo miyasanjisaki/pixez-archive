@@ -26,7 +26,7 @@ class UpdatePage extends StatefulWidget {
 }
 
 class _UpdatePageState extends State<UpdatePage> {
-  Dio _dio = Dio();
+  final Dio _dio = Dio();
 
   @override
   void initState() {
@@ -37,16 +37,18 @@ class _UpdatePageState extends State<UpdatePage> {
   LastRelease? lastRelease;
   dynamic error;
 
-  initData() async {
+  Future<void> initData() async {
     try {
       Response response = await _dio.get(
-        'https://api.github.com/repos/Notsfsssf/pixez-flutter/releases/latest',
+        'https://api.github.com/repos/miyasanjisaki/pixez-archive/releases/latest',
       );
       final result = LastRelease.fromJson(response.data);
+      if (!mounted) return;
       setState(() {
         lastRelease = result;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         error = e;
       });
@@ -67,30 +69,31 @@ class _UpdatePageState extends State<UpdatePage> {
                     : Container(child: Center(child: Text(error.toString())));
               },
             )
-          : ListView(
-              children: <Widget>[
-                ListTile(
-                  title: Text(I18n.of(context).latest_version),
-                  subtitle: Text(lastRelease!.tagName ?? ''),
-                ),
-                ListTile(
-                  title: Text(I18n.of(context).download_address),
-                  subtitle: SelectableText(
-                    lastRelease!.assets?.first.browserDownloadUrl ?? '',
-                  ),
-                  onTap: () {
-                    try {
-                      launchUrlString(
-                        lastRelease!.assets?.first.browserDownloadUrl ?? '',
-                      );
-                    } catch (e) {}
-                  },
-                ),
-                ListTile(
-                  title: Text(I18n.of(context).new_version_update_information),
-                  subtitle: Text(lastRelease!.body ?? ''),
-                ),
-              ],
+          : Builder(
+              builder: (context) {
+                final downloadUrl = lastRelease!.preferredAndroidDownloadUrl;
+                return ListView(
+                  children: <Widget>[
+                    ListTile(
+                      title: Text(I18n.of(context).latest_version),
+                      subtitle: Text(lastRelease!.tagName ?? ''),
+                    ),
+                    ListTile(
+                      title: Text(I18n.of(context).download_address),
+                      subtitle: SelectableText(downloadUrl ?? ''),
+                      onTap: downloadUrl?.isNotEmpty == true
+                          ? () => launchUrlString(downloadUrl!)
+                          : null,
+                    ),
+                    ListTile(
+                      title: Text(
+                        I18n.of(context).new_version_update_information,
+                      ),
+                      subtitle: Text(lastRelease!.body ?? ''),
+                    ),
+                  ],
+                );
+              },
             ),
       floatingActionButton: FloatingActionButton(
         onPressed: () {

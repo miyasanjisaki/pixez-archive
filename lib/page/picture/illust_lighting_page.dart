@@ -308,7 +308,8 @@ class _IllustVerticalPageState extends State<IllustVerticalPage>
                         tags: tags,
                       );
                       if (success && userSetting.followAfterStar) {
-                        bool followSuccess = await _illustStore.followAfterStar();
+                        bool followSuccess = await _illustStore
+                            .followAfterStar();
                         if (followSuccess) {
                           userStore?.isFollow = true;
                           BotToast.showText(
@@ -1330,7 +1331,14 @@ class _IllustVerticalPageState extends State<IllustVerticalPage>
       if (userSetting.saveAfterStar && (_illustStore.state == 0)) {
         saveStore.saveImage(_illustStore.illusts!);
       }
-      bool success = await _illustStore.star(restrict: restrict, tags: tags, force: true);
+      bool success = await _illustStore.star(
+        restrict: restrict,
+        tags: tags,
+        force: true,
+      );
+      if (!success && mounted) {
+        BotToast.showText(text: I18n.of(context).failed);
+      }
       if (success && userSetting.followAfterStar) {
         await _illustStore.followAfterStar();
       }

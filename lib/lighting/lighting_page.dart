@@ -28,6 +28,8 @@ import 'package:pixez/i18n.dart';
 import 'package:pixez/lighting/lighting_store.dart';
 import 'package:pixez/main.dart';
 import 'package:pixez/models/illust.dart';
+import 'package:pixez/page/picture/illust_store.dart';
+import 'package:pixez/utils/illust_result_options.dart';
 import 'package:waterfall_flow/waterfall_flow.dart';
 
 class WaterFallLoading extends StatefulWidget {
@@ -40,9 +42,7 @@ class WaterFallLoading extends StatefulWidget {
 class _WaterFallLoadingState extends State<WaterFallLoading> {
   @override
   Widget build(BuildContext context) {
-    return Container(
-      child: Center(child: CircularProgressIndicator()),
-    );
+    return Container(child: Center(child: CircularProgressIndicator()));
   }
 }
 
@@ -54,17 +54,21 @@ class LightingList extends StatefulWidget {
   final String? portal;
   final bool? ai;
   final bool Function(Illusts)? filter;
+  final Comparator<Illusts>? comparator;
+  final bool showStats;
 
-  const LightingList(
-      {Key? key,
-      required this.source,
-      this.header,
-      this.isNested,
-      this.scrollController,
-      this.portal,
-      this.ai,
-      this.filter})
-      : super(key: key);
+  const LightingList({
+    Key? key,
+    required this.source,
+    this.header,
+    this.isNested,
+    this.scrollController,
+    this.portal,
+    this.ai,
+    this.filter,
+    this.comparator,
+    this.showStats = false,
+  }) : super(key: key);
 
   @override
   _LightingListState createState() => _LightingListState();
@@ -79,6 +83,8 @@ class _LightingListState extends State<LightingList> {
   @override
   void didUpdateWidget(LightingList oldWidget) {
     super.didUpdateWidget(oldWidget);
+    _ai = widget.ai ?? false;
+    _store.portal = widget.portal;
     if (oldWidget.source != widget.source) {
       _store.source = widget.source;
       _fetch();
@@ -86,7 +92,8 @@ class _LightingListState extends State<LightingList> {
   }
 
   _fetch() async {
-    await _store.fetch(force: true);
+    final loaded = await _store.fetch(force: true);
+    if (!mounted || !loaded) return;
     if (!_isNested &&
         _store.errorMessage == null &&
         !_store.iStores.isEmpty &&
@@ -103,10 +110,11 @@ class _LightingListState extends State<LightingList> {
     _isNested = widget.isNested ?? false;
     _scrollController = widget.scrollController ?? ScrollController();
     _refreshController = EasyRefreshController(
-        controlFinishLoad: true, controlFinishRefresh: true);
-    _store = LightingStore(
-      widget.source,
+      controlFinishLoad: true,
+      controlFinishRefresh: true,
     );
+    _store = LightingStore(widget.source);
+    _store.portal = widget.portal;
     _store.easyRefreshController = _refreshController;
     super.initState();
     _store.fetch();
@@ -122,62 +130,48 @@ class _LightingListState extends State<LightingList> {
     super.dispose();
   }
 
-  bool backToTopVisible = false;
+  bool _loadingFilteredPage = false;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      child: Observer(builder: (_) {
-        return Container(child: _buildContent(context));
-      }),
+      child: Observer(
+        builder: (_) {
+          return Container(child: _buildContent(context));
+        },
+      ),
     );
   }
 
   late EasyRefreshController _refreshController;
 
-  Widget _buildWithoutHeader(context) {
-    _store.iStores.removeWhere((element) {
-      if (element.illusts!.hateByUser(ai: _ai)) return true;
-      if (widget.filter != null && !widget.filter!(element.illusts!)) {
-        return true;
-      }
-      return false;
-    });
-    return NotificationListener<ScrollNotification>(
-        onNotification: (ScrollNotification notification) {
-          if (widget.isNested == true) {
-            return true;
-          }
-          ScrollMetrics metrics = notification.metrics;
-          if (backToTopVisible == metrics.atEdge && mounted) {
-            setState(() {
-              backToTopVisible = !backToTopVisible;
-            });
-          }
-          return true;
+  Widget _buildWithoutHeader(
+    BuildContext context,
+    List<IllustStore> visibleStores,
+  ) {
+    return EasyRefresh.builder(
+      controller: _refreshController,
+      header: PixezDefault.header(context),
+      footer: PixezDefault.footer(context),
+      scrollController: _scrollController,
+      onRefresh: () async {
+        await _store.fetch(force: true);
+      },
+      onLoad: () async {
+        await _store.fetchNext();
+      },
+      childBuilder: (context, physics) => WaterfallFlow.builder(
+        physics: physics,
+        controller: widget.isNested ?? false ? null : _scrollController,
+        padding: EdgeInsets.all(5.0),
+        itemCount: visibleStores.length + (_canManuallyLoadMore ? 1 : 0),
+        itemBuilder: (context, index) {
+          if (index == visibleStores.length) return _buildLoadMoreButton();
+          return _buildItem(index, visibleStores);
         },
-        child: EasyRefresh.builder(
-          controller: _refreshController,
-          header: PixezDefault.header(context),
-          footer: PixezDefault.footer(context),
-          scrollController: _scrollController,
-          onRefresh: () {
-            _store.fetch(force: true);
-          },
-          onLoad: () {
-            _store.fetchNext();
-          },
-          childBuilder: (context, physics) => WaterfallFlow.builder(
-            physics: physics,
-            controller: widget.isNested ?? false ? null : _scrollController,
-            padding: EdgeInsets.all(5.0),
-            itemCount: _store.iStores.length,
-            itemBuilder: (context, index) {
-              return _buildItem(index);
-            },
-            gridDelegate: _buildGridDelegate(),
-          ),
-        ));
+        gridDelegate: _buildGridDelegate(),
+      ),
+    );
   }
 
   bool needToBan(Illusts illust) {
@@ -196,15 +190,90 @@ class _LightingListState extends State<LightingList> {
   }
 
   Widget _buildContent(context) {
-    return _store.errorMessage != null
-        ? _buildErrorContent(context)
-        : _store.iStores.isNotEmpty
-            ? (widget.header != null
-                ? _buildWithHeader(context)
-                : _buildWithoutHeader(context))
-            : Container(
-                child: _store.refreshing ? WaterFallLoading() : Container(),
-              );
+    if (_store.errorMessage != null) return _buildErrorContent(context);
+    if (_store.iStores.isEmpty) {
+      return Container(
+        child: _store.refreshing ? WaterFallLoading() : Container(),
+      );
+    }
+
+    final visibleStores = _visibleStores();
+    if (visibleStores.isEmpty) return _buildEmptyFilteredContent(context);
+    return widget.header != null
+        ? _buildWithHeader(context, visibleStores)
+        : _buildWithoutHeader(context, visibleStores);
+  }
+
+  List<IllustStore> _visibleStores() {
+    final candidates = _store.iStores.where((element) {
+      final illust = element.illusts;
+      if (illust == null || illust.hateByUser(ai: _ai)) return false;
+      return widget.filter?.call(illust) ?? true;
+    });
+    Comparator<IllustStore>? storeComparator;
+    if (widget.comparator != null) {
+      storeComparator = (left, right) =>
+          widget.comparator!(left.illusts!, right.illusts!);
+    }
+    return stableSortedCopy(candidates, storeComparator);
+  }
+
+  Widget _buildEmptyFilteredContent(BuildContext context) {
+    final canLoadMore = _store.nextUrl?.isNotEmpty == true;
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(I18n.of(context).no_result),
+          if (canLoadMore)
+            TextButton(
+              onPressed: _loadingFilteredPage
+                  ? null
+                  : _loadMoreForFilteredResults,
+              child: _buildLoadMoreButtonContent(),
+            ),
+        ],
+      ),
+    );
+  }
+
+  bool get _canManuallyLoadMore =>
+      widget.filter != null && _store.nextUrl?.isNotEmpty == true;
+
+  Widget _buildLoadMoreButton() {
+    return Center(
+      child: TextButton(
+        onPressed: _loadingFilteredPage ? null : _loadMoreForFilteredResults,
+        child: _buildLoadMoreButtonContent(),
+      ),
+    );
+  }
+
+  Widget _buildLoadMoreButtonContent() {
+    return _loadingFilteredPage
+        ? const SizedBox(
+            width: 16,
+            height: 16,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          )
+        : Text(I18n.of(context).more);
+  }
+
+  Future<void> _loadMoreForFilteredResults() async {
+    if (_loadingFilteredPage || _store.requestInProgress) return;
+    setState(() {
+      _loadingFilteredPage = true;
+    });
+    final loaded = await _store.fetchNext();
+    if (!mounted) return;
+    setState(() {
+      _loadingFilteredPage = false;
+    });
+    if (!loaded) {
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        SnackBar(content: Text(I18n.of(context).loading_failed_retry_message)),
+      );
+    }
   }
 
   Widget _buildErrorContent(context) {
@@ -215,24 +284,21 @@ class _LightingListState extends State<LightingList> {
         mainAxisAlignment: MainAxisAlignment.center,
         crossAxisAlignment: CrossAxisAlignment.center,
         children: <Widget>[
-          Container(
-            height: 50,
-          ),
+          Container(height: 50),
           Padding(
             padding: const EdgeInsets.all(8.0),
-            child:
-                Text(':(', style: Theme.of(context).textTheme.headlineMedium),
+            child: Text(
+              ':(',
+              style: Theme.of(context).textTheme.headlineMedium,
+            ),
           ),
           TextButton(
-              onPressed: () {
-                _store.fetch(force: true);
-              },
-              child: Text(I18n.of(context).retry)),
-          Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Text(
-                errorText,
-              ))
+            onPressed: () {
+              _store.fetch(force: true);
+            },
+            child: Text(I18n.of(context).retry),
+          ),
+          Padding(padding: const EdgeInsets.all(16.0), child: Text(errorText)),
         ],
       ),
     );
@@ -246,65 +312,55 @@ class _LightingListState extends State<LightingList> {
     return '(${Constants.tagName}) $message';
   }
 
-  Widget _buildWithHeader(BuildContext context) {
-    return NotificationListener<ScrollNotification>(
-      onNotification: (ScrollNotification notification) {
-        ScrollMetrics metrics = notification.metrics;
-        if (backToTopVisible == metrics.atEdge && mounted) {
-          setState(() {
-            backToTopVisible = !backToTopVisible;
-          });
-        }
-        return true;
+  Widget _buildWithHeader(
+    BuildContext context,
+    List<IllustStore> visibleStores,
+  ) {
+    return EasyRefresh.builder(
+      controller: _refreshController,
+      scrollController: _scrollController,
+      header: PixezDefault.header(context),
+      footer: PixezDefault.footer(context, position: IndicatorPosition.locator),
+      onRefresh: () async {
+        await _store.fetch(force: true);
       },
-      child: EasyRefresh.builder(
-        controller: _refreshController,
-        scrollController: _scrollController,
-        header: PixezDefault.header(context),
-        footer:
-            PixezDefault.footer(context, position: IndicatorPosition.locator),
-        onRefresh: () {
-          _store.fetch(force: true);
-        },
-        onLoad: () {
-          _store.fetchNext();
-        },
-        childBuilder: ((context, physics) {
-          return CustomScrollView(
-            physics: physics,
-            controller: widget.isNested ?? false ? null : _scrollController,
-            slivers: [
-              SliverToBoxAdapter(
-                child: Container(child: widget.header),
+      onLoad: () async {
+        await _store.fetchNext();
+      },
+      childBuilder: ((context, physics) {
+        return CustomScrollView(
+          physics: physics,
+          controller: widget.isNested ?? false ? null : _scrollController,
+          slivers: [
+            SliverToBoxAdapter(child: Container(child: widget.header)),
+            SliverWaterfallFlow(
+              gridDelegate: _buildGridDelegate(),
+              delegate: _buildSliverChildBuilderDelegate(
+                context,
+                visibleStores,
               ),
-              SliverWaterfallFlow(
-                gridDelegate: _buildGridDelegate(),
-                delegate: _buildSliverChildBuilderDelegate(context),
-              ),
-              const FooterLocator.sliver(),
-            ],
-          );
-        }),
-      ),
+            ),
+            const FooterLocator.sliver(),
+          ],
+        );
+      }),
     );
   }
 
   SliverChildBuilderDelegate _buildSliverChildBuilderDelegate(
-      BuildContext context) {
-    _store.iStores.removeWhere((element) {
-      if (element.illusts!.hateByUser(ai: _ai)) return true;
-      if (widget.filter != null && !widget.filter!(element.illusts!)) {
-        return true;
-      }
-      return false;
-    });
+    BuildContext context,
+    List<IllustStore> visibleStores,
+  ) {
     return SliverChildBuilderDelegate((BuildContext context, int index) {
+      if (index == visibleStores.length) return _buildLoadMoreButton();
       return IllustCard(
         lightingStore: _store,
-        store: _store.iStores[index],
-        iStores: _store.iStores,
+        store: visibleStores[index],
+        iStores: visibleStores,
+        iStoresProvider: _visibleStores,
+        showStats: widget.showStats || widget.comparator != null,
       );
-    }, childCount: _store.iStores.length);
+    }, childCount: visibleStores.length + (_canManuallyLoadMore ? 1 : 0));
   }
 
   SliverWaterfallFlowDelegate _buildGridDelegate() {
@@ -334,11 +390,13 @@ class _LightingListState extends State<LightingList> {
     return result;
   }
 
-  Widget _buildItem(int index) {
+  Widget _buildItem(int index, List<IllustStore> visibleStores) {
     return IllustCard(
-      store: _store.iStores[index],
+      store: visibleStores[index],
       lightingStore: _store,
-      iStores: _store.iStores,
+      iStores: visibleStores,
+      iStoresProvider: _visibleStores,
+      showStats: widget.showStats || widget.comparator != null,
     );
   }
 }
