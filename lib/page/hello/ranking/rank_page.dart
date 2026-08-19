@@ -28,6 +28,7 @@ import 'package:pixez/page/hello/ranking/ranking_mode/rank_mode_page.dart';
 import 'package:pixez/page/search/result_illust_list.dart';
 import 'package:pixez/utils/bookmark_interest_tags.dart';
 import 'package:pixez/utils/haptic_util.dart';
+import 'package:pixez/utils/ranking_choice_layout.dart';
 
 class RankPage extends StatefulWidget {
   RankPage({Key? key});
@@ -268,6 +269,12 @@ class _RankPageState extends State<RankPage>
   }
 
   Widget _buildChoicePage(BuildContext context, List<String> rankListMean) {
+    final mediaQuery = MediaQuery.of(context);
+    final bottomPadding = calculateRankingChoiceBottomPadding(
+      viewportWidth: mediaQuery.size.width,
+      viewportHeight: mediaQuery.size.height,
+      systemBottomPadding: mediaQuery.viewPadding.bottom,
+    );
     return Container(
       child: Column(
         children: <Widget>[
@@ -291,7 +298,12 @@ class _RankPageState extends State<RankPage>
           ),
           Expanded(
             child: SingleChildScrollView(
-              padding: EdgeInsets.all(8.0),
+              padding: EdgeInsets.fromLTRB(
+                rankingChoiceContentPadding,
+                rankingChoiceContentPadding,
+                rankingChoiceContentPadding,
+                bottomPadding,
+              ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
