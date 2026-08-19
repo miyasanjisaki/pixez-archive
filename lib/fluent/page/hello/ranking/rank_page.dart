@@ -18,8 +18,7 @@ import 'dart:async';
 
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter_mobx/flutter_mobx.dart';
-import 'package:pixez/er/fluent_leader.dart';
-import 'package:pixez/fluent/page/search/result_page.dart';
+import 'package:pixez/fluent/page/search/result_illust_list.dart';
 import 'package:pixez/i18n.dart';
 import 'package:pixez/main.dart';
 import 'package:pixez/models/illust_bookmark_tags_response.dart';
@@ -46,6 +45,8 @@ class _RankPageState extends State<RankPage>
     "week_rookie",
     "week",
     "month",
+    "day_ai",
+    "day_r18_ai",
     "day_r18",
     "week_r18",
     "week_r18g",
@@ -58,6 +59,8 @@ class _RankPageState extends State<RankPage>
   bool _loadingInterestTags = false;
   bool _interestTagsFailed = false;
   bool _choiceDialogOpen = false;
+  bool _preferencesReady = false;
+  final Set<String> _selectedInterestTags = <String>{};
 
   GlobalKey appBarKey = GlobalKey();
   ValueNotifier<double?> appBarHeightNotifier = ValueNotifier(null);
@@ -71,7 +74,7 @@ class _RankPageState extends State<RankPage>
   @override
   void initState() {
     nowDate = DateTime.now();
-    rankStore = RankStore()..init();
+    rankStore = RankStore();
     int i = 0;
     modeList.forEach((element) {
       boolList[i] = false;
@@ -79,18 +82,30 @@ class _RankPageState extends State<RankPage>
     });
     super.initState();
     subscription = topStore.topStream.listen((event) {
-      if (event == "200") {
+      if (event == "200" && index < rankStore.modeList.length) {
         topStore.setTop((201 + index).toString());
       }
     });
 
-    Future.delayed(Duration.zero, () {
-      if (rankStore.inChoice || rankStore.modeList.isEmpty) {
-        final rankListMean = I18n.of(context).mode_list.split(' ');
-        _choicePage(context, rankListMean);
-      }
-      _refreshInterestTags();
-    });
+    _initializePreferences();
+  }
+
+  Future<void> _initializePreferences() async {
+    await rankStore.init();
+    for (var i = 0; i < modeList.length; i++) {
+      boolList[i] = rankStore.modeList.contains(modeList[i]);
+    }
+    _selectedInterestTags
+      ..clear()
+      ..addAll(rankStore.tagList);
+    if (!mounted) return;
+    setState(() => _preferencesReady = true);
+    await _refreshInterestTags();
+    if (!mounted) return;
+    if (rankStore.inChoice ||
+        (rankStore.modeList.isEmpty && rankStore.tagList.isEmpty)) {
+      await _choicePage(context, I18n.of(context).mode_list.split(' '));
+    }
   }
 
   Future<List<BookmarkTag>> _loadBookmarkTags(int userId, String restrict) {
@@ -179,6 +194,9 @@ class _RankPageState extends State<RankPage>
     final rankListMean = I18n.of(context).mode_list.split(' ');
     return Observer(
       builder: (_) {
+        if (!_preferencesReady) {
+          return const Center(child: ProgressRing());
+        }
         if (rankStore.inChoice) {
           return Container(
             child: Center(
@@ -189,55 +207,70 @@ class _RankPageState extends State<RankPage>
             ),
           );
         }
-        if (rankStore.modeList.isNotEmpty) {
+        final savedModes = rankStore.modeList.toList(growable: false);
+        final savedTags = rankStore.tagList.toList(growable: false);
+        if (savedModes.isNotEmpty || savedTags.isNotEmpty) {
           var list = I18n.of(context).mode_list.split(' ');
           List<String> titles = [];
-          for (var i = 0; i < rankStore.modeList.length; i++) {
-            int index = modeList.indexOf(rankStore.modeList[i]);
-            if (index < 0) {
-              debugPrint(rankStore.modeList[i] + ' is -1');
-              continue;
-            }
-            titles.add(list[index]);
+          for (final mode in savedModes) {
+            final modeIndex = modeList.indexOf(mode);
+            titles.add(
+              modeIndex >= 0 && modeIndex < list.length
+                  ? list[modeIndex]
+                  : mode,
+            );
           }
+          titles.addAll(savedTags);
           return NavigationView(
             pane: NavigationPane(
               header: IconButton(
                 icon: Icon(WindowsIcons.return_to_window),
-                onPressed: () {
-                  rankStore.reset();
-                  _choicePage(context, rankListMean);
+                onPressed: () async {
+                  await _resetChoices();
+                  if (context.mounted) {
+                    await _choicePage(context, rankListMean);
+                  }
                 },
               ),
               selected: index,
               onChanged: (value) => setState(() => index = value),
               displayMode: PaneDisplayMode.top,
               items: [
-                for (int i = 0; i < titles.length; i++)
+                for (int i = 0; i < savedModes.length; i++)
                   PaneItem(
                     icon: Icon(FluentIcons.context_menu),
                     title: Text(titles[i]),
                     body: RankModePage(
                       date: dateTime,
-                      mode: rankStore.modeList[i],
+                      mode: savedModes[i],
                       index: i,
+                    ),
+                  ),
+                for (int i = 0; i < savedTags.length; i++)
+                  PaneItem(
+                    icon: const Icon(FluentIcons.search),
+                    title: Text(savedTags[i]),
+                    body: ResultIllustList(
+                      key: ValueKey('ranking-interest:${savedTags[i]}'),
+                      word: savedTags[i],
                     ),
                   ),
               ],
               footerItems: [
-                PaneItemWidgetAdapter(
-                  child: CalendarDatePicker(
-                    initialStart: nowDateTime,
-                    onSelectionChanged: (value) {
-                      nowDateTime = value.selectedDates[0];
-                      this.dateTime = toRequestDate(nowDateTime);
-                    },
-                    locale: userSetting.locale,
-                    minDate: DateTime(2007, 8),
-                    //pixiv于2007年9月10日由上谷隆宏等人首次推出第一个测试版...
-                    maxDate: DateTime.now(),
+                if (index < savedModes.length)
+                  PaneItemWidgetAdapter(
+                    child: CalendarDatePicker(
+                      initialStart: nowDateTime,
+                      onSelectionChanged: (value) {
+                        nowDateTime = value.selectedDates[0];
+                        this.dateTime = toRequestDate(nowDateTime);
+                      },
+                      locale: userSetting.locale,
+                      minDate: DateTime(2007, 8),
+                      //pixiv于2007年9月10日由上谷隆宏等人首次推出第一个测试版...
+                      maxDate: DateTime.now(),
+                    ),
                   ),
-                ),
               ],
             ),
           );
@@ -285,18 +318,11 @@ class _RankPageState extends State<RankPage>
                       ),
                       child: Checkbox(
                         content: Text(value),
-                        checked: _rankFilters.contains(value),
+                        checked: boolList[rankListMean.indexOf(value)] ?? false,
                         onChanged: (v) {
-                          boolList[rankListMean.indexOf(value)] = v ?? false;
-                          if (v ?? false) {
-                            dialogSetState(() {
-                              _rankFilters.add(value);
-                            });
-                          } else {
-                            dialogSetState(() {
-                              _rankFilters.remove(value);
-                            });
-                          }
+                          dialogSetState(() {
+                            boolList[rankListMean.indexOf(value)] = v ?? false;
+                          });
                         },
                       ),
                     ),
@@ -345,20 +371,21 @@ class _RankPageState extends State<RankPage>
                         runSpacing: 8,
                         children: [
                           for (final tag in _interestTags)
-                            Button(
+                            ToggleButton(
+                              checked: _selectedInterestTags.contains(tag.name),
                               child: Text(
                                 tag.count > 0
                                     ? '${tag.name} · ${tag.count}'
                                     : tag.name,
                               ),
-                              onPressed: () {
-                                Navigator.of(dialogContext).pop();
-                                FluentLeader.push(
-                                  pageContext,
-                                  ResultPage(word: tag.name),
-                                  icon: const Icon(FluentIcons.search),
-                                  title: Text(tag.name),
-                                );
+                              onChanged: (selected) {
+                                dialogSetState(() {
+                                  if (selected) {
+                                    _selectedInterestTags.add(tag.name);
+                                  } else {
+                                    _selectedInterestTags.remove(tag.name);
+                                  }
+                                });
                               },
                             ),
                         ],
@@ -372,8 +399,13 @@ class _RankPageState extends State<RankPage>
             FilledButton(
               child: Text(I18n.of(dialogContext).ok),
               onPressed: () async {
-                await rankStore.saveChange(boolList);
-                rankStore.inChoice = false;
+                await rankStore.saveChange(
+                  boolList,
+                  selectedTags: _selectedInterestTags,
+                );
+                index = 0;
+                rankStore.setInChoice(false);
+                if (mounted) setState(() {});
                 Navigator.of(dialogContext).pop();
               },
             ),
@@ -385,7 +417,15 @@ class _RankPageState extends State<RankPage>
     }
   }
 
-  List<String> _rankFilters = [];
+  Future<void> _resetChoices() async {
+    for (var i = 0; i < modeList.length; i++) {
+      boolList[i] = false;
+    }
+    _selectedInterestTags.clear();
+    index = 0;
+    await rankStore.reset();
+    if (mounted) setState(() {});
+  }
 
   @override
   bool get wantKeepAlive => true;

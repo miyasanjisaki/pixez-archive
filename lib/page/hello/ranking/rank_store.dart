@@ -23,6 +23,7 @@ class RankStore = _RankStoreBase with _$RankStore;
 
 abstract class _RankStoreBase with Store {
   static const MODE_LIST = 'mode_list';
+  static const TAG_LIST = 'ranking_interest_tag_list';
   List<String> intialModeList = [
     "day",
     "day_male",
@@ -35,17 +36,20 @@ abstract class _RankStoreBase with Store {
     "day_r18_ai",
     "day_r18",
     "week_r18",
-    "week_r18g"
+    "week_r18g",
   ];
   @observable
   ObservableList<String> modeList = ObservableList();
+  final ObservableList<String> tagList = ObservableList();
   @observable
   bool inChoice = false;
 
   @action
   Future<void> reset() async {
     await Prefer.remove(MODE_LIST);
+    await Prefer.remove(TAG_LIST);
     modeList.clear();
+    tagList.clear();
     inChoice = true;
   }
 
@@ -59,16 +63,27 @@ abstract class _RankStoreBase with Store {
     var list = Prefer.getStringList(MODE_LIST) ?? [];
     modeList.clear();
     modeList.addAll(list);
+    tagList
+      ..clear()
+      ..addAll(Prefer.getStringList(TAG_LIST) ?? const []);
   }
 
   @action
-  Future<void> saveChange(Map<int, bool> selectMap) async {
+  Future<void> saveChange(
+    Map<int, bool> selectMap, {
+    Iterable<String> selectedTags = const [],
+  }) async {
     List<String> saveList = [];
     selectMap.forEach((s, b) {
       if (b) saveList.add(intialModeList[s]);
     });
+    final savedTags = selectedTags.toSet().toList()..sort();
     await Prefer.setStringList(MODE_LIST, saveList);
+    await Prefer.setStringList(TAG_LIST, savedTags);
     modeList.clear();
     modeList.addAll(saveList);
+    tagList
+      ..clear()
+      ..addAll(savedTags);
   }
 }

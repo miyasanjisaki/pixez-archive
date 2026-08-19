@@ -27,7 +27,6 @@ import 'package:pixez/fluent/page/about/about_page.dart';
 import 'package:pixez/fluent/page/account/edit/account_edit_page.dart';
 import 'package:pixez/fluent/page/account/select/account_select_page.dart';
 import 'package:pixez/fluent/page/board/board_page.dart';
-import 'package:pixez/fluent/page/book/tag/book_tag_page.dart';
 import 'package:pixez/fluent/page/hello/recom/recom_manga_page.dart';
 import 'package:pixez/fluent/page/hello/setting/data_export_page.dart';
 import 'package:pixez/fluent/page/hello/setting/setting_quality_page.dart';
@@ -191,17 +190,6 @@ class _SettingPageState extends State<SettingPage> {
                   title: Text(I18n.of(context).quality_setting),
                 );
               },
-            ),
-            ListTile(
-              leading: Icon(FluentIcons.bookmarks),
-              title: Text(I18n.of(context).favorited_tag),
-              trailing: Icon(FluentIcons.chevron_right),
-              onPressed: () => Leader.pushWithScaffold(
-                context,
-                BookTagPage(),
-                icon: Icon(FluentIcons.bookmarks),
-                title: Text(I18n.of(context).favorited_tag),
-              ),
             ),
             ListTile(
               leading: Icon(FluentIcons.blocked),
