@@ -29,6 +29,7 @@ import 'package:pixez/lighting/lighting_page.dart';
 import 'package:pixez/lighting/lighting_store.dart';
 import 'package:pixez/main.dart';
 import 'package:pixez/network/api_client.dart';
+import 'package:pixez/page/user/bookmark/bookmark_search_page.dart';
 import 'package:pixez/page/user/bookmark/tag/user_bookmark_tag_page.dart';
 import 'package:pixez/page/user/works/works_page.dart';
 import 'package:waterfall_flow/waterfall_flow.dart';
@@ -181,6 +182,7 @@ class _BookmarkPageState extends State<BookmarkPage> {
               ),
             ),
           ),
+          BookmarkSearchChip(userId: widget.id),
         ],
       ),
     );
@@ -467,8 +469,30 @@ class _BookMarkNestedPageState extends State<BookMarkNestedPage> {
               ),
             ),
           ),
+          BookmarkSearchChip(userId: widget.id),
         ],
       ),
+    );
+  }
+}
+
+/// Opens [BookmarkSearchPage] from the bookmark list header.
+class BookmarkSearchChip extends StatelessWidget {
+  final int userId;
+
+  const BookmarkSearchChip({super.key, required this.userId});
+
+  @override
+  Widget build(BuildContext context) {
+    final zh = Localizations.localeOf(context).languageCode == 'zh';
+    return ActionChip(
+      avatar: const Icon(Icons.search, size: 18),
+      label: Text(zh ? '搜索收藏' : 'Search'),
+      backgroundColor: Theme.of(context).cardColor,
+      elevation: 4.0,
+      padding: EdgeInsets.zero,
+      onPressed: () =>
+          Navigator.of(context).push(BookmarkSearchPage.route(userId)),
     );
   }
 }

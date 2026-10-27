@@ -116,7 +116,7 @@ class PixezNetworkSettings {
           ExternalTlsTrustChannel.androidSecurityContext,
         ],
       ),
-      'safe.iqdb.org' => const ExternalTlsHostPlan(
+      'iqdb.org' || 'safe.iqdb.org' => const ExternalTlsHostPlan(
         primary: ExternalTlsTrustChannel.webpki,
         invalidCertificateFallbacks: <ExternalTlsTrustChannel>[
           ExternalTlsTrustChannel.androidSecurityContext,

@@ -82,7 +82,7 @@ ExternalSearchDioClient _fallbackClient({
   List<ExternalTlsTrustChannel>? channels,
 }) {
   return ExternalSearchDioClient(
-    baseUrl: 'https://safe.iqdb.org',
+    baseUrl: 'https://iqdb.org',
     networkModeProvider: () => NetworkMode.standard,
     trustPlan: const ExternalTlsHostPlan(
       primary: ExternalTlsTrustChannel.webpki,
@@ -177,7 +177,14 @@ void main() {
         _normalizedMultipart(requests[0]),
         contains(latin1.decode(_query().bytes)),
       );
-      expect(_multipartServiceIds(requests[0]), <String>['1', '2', '3', '11']);
+      expect(_multipartServiceIds(requests[0]), <String>[
+        '1',
+        '2',
+        '3',
+        '4',
+        '5',
+        '11',
+      ]);
     },
   );
 
@@ -205,7 +212,7 @@ void main() {
   test('reports the provider-owned total deadline as timeout', () async {
     final adapter = _PendingHttpClientAdapter();
     final dio = Dio(
-      BaseOptions(baseUrl: 'https://safe.iqdb.org', followRedirects: false),
+      BaseOptions(baseUrl: 'https://iqdb.org', followRedirects: false),
     )..httpClientAdapter = adapter;
     final provider = IqdbSearchProvider(
       dio: dio,
@@ -253,7 +260,7 @@ void main() {
   test('reports earlier caller cancellation as cancellation', () async {
     final adapter = _PendingHttpClientAdapter();
     final dio = Dio(
-      BaseOptions(baseUrl: 'https://safe.iqdb.org', followRedirects: false),
+      BaseOptions(baseUrl: 'https://iqdb.org', followRedirects: false),
     )..httpClientAdapter = adapter;
     final provider = IqdbSearchProvider(
       dio: dio,

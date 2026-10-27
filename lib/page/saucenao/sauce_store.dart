@@ -39,6 +39,7 @@ import 'package:pixez/page/saucenao/bookmark_visual_search_dialog.dart';
 import 'package:pixez/page/saucenao/iqdb_provider.dart';
 import 'package:pixez/page/webview/ascii2d_browser_search_page.dart';
 import 'package:pixez/utils/bookmark_visual_search.dart';
+import 'package:pixez/utils/booru_pixiv_resolver.dart';
 import 'package:pixez/utils/pixiv_bookmark_visual_search.dart';
 import 'package:pixez/utils/pixiv_image_identity.dart';
 import 'package:pixez/utils/reverse_image_search.dart';
@@ -195,6 +196,7 @@ abstract class SauceStoreBase with Store {
   final IqdbSearchProvider _iqdbProvider = IqdbSearchProvider(
     networkModeProvider: () => userSetting.networkMode,
   );
+  final BooruPixivResolver _booruResolver = BooruPixivResolver.network();
   final Observable<SauceSearchPhase> phase = Observable(SauceSearchPhase.idle);
   final Observable<String?> lastError = Observable(null);
   final Observable<String?> selectedFileName = Observable(null);
@@ -466,9 +468,7 @@ abstract class SauceStoreBase with Store {
       // Completed task rows predate the content-hash index. Treat a unique
       // filename match only as a user-confirmed hint after stronger exact
       // identity checks; never persist the selected bytes under that hint.
-      final completedTask = pickedName == null
-          ? null
-          : await _completedTaskForName(pickedName);
+      final completedTask = await _completedTaskForName(pickedName);
       if (_disposed) return null;
 
       final inputLength = pickedFile != null
@@ -1638,6 +1638,10 @@ abstract class SauceStoreBase with Store {
       }
     }
 
+    final attributedHits = await _attributeBooruHits(hits, cancelToken);
+    hits
+      ..clear()
+      ..addAll(attributedHits);
     final sauceCandidateCount = hits.length;
     final sauceResultLabel = sauceCandidateCount == 0
         ? 'No SauceNAO result'
@@ -1690,7 +1694,11 @@ abstract class SauceStoreBase with Store {
         messages.add(iqdbResponse.serviceMessage!);
         LPrinter.d('IQDB provider unavailable: ${iqdbResponse.serviceMessage}');
       }
-      if (!sessionCancelToken.isCancelled) hits.addAll(iqdbResponse.hits);
+      if (!sessionCancelToken.isCancelled) {
+        hits.addAll(
+          await _attributeBooruHits(iqdbResponse.hits, requestCancelToken),
+        );
+      }
     } catch (error, stackTrace) {
       const message = 'IQDB returned an unsupported response';
       messages.add(message);
@@ -1720,6 +1728,23 @@ abstract class SauceStoreBase with Store {
       successfulProviders: successfulProviders,
       serviceMessages: messages,
     );
+  }
+
+  /// Traces Danbooru/yande.re/Konachan hits back to their Pixiv originals.
+  ///
+  /// Failures are deliberately silent: an unresolved hit is still shown as a
+  /// browser link, exactly as before.
+  Future<List<ReverseImageProviderHit>> _attributeBooruHits(
+    List<ReverseImageProviderHit> hits,
+    CancelToken cancelToken,
+  ) async {
+    if (hits.isEmpty || cancelToken.isCancelled || _disposed) return hits;
+    try {
+      return await _booruResolver.resolve(hits, cancelToken: cancelToken);
+    } on Object catch (error) {
+      LPrinter.d('Booru source lookup failed: $error');
+      return hits;
+    }
   }
 
   List<ReverseImageProviderHit> _deduplicateProviderHits(
@@ -2021,119 +2046,52 @@ abstract class SauceStoreBase with Store {
   Future<bool> _confirmHistoricalDownload(
     BuildContext context,
     TaskPersist task,
-  ) async {
+  ) {
     final isChinese = Localizations.localeOf(context).languageCode == 'zh';
-    final title = isChinese ? '发现历史下载记录' : 'Historical download found';
-    final message = isChinese
-        ? '文件名与过去下载的「${task.title}」（Pixiv #${task.illustId}）相同，'
-              '但无法确认图片内容是否被替换或编辑。是否打开该作品？'
-        : 'The file name matches a previous download, "${task.title}" '
-              '(Pixiv #${task.illustId}), but the image bytes cannot be '
-              'verified. Open this work?';
-
-    if (Platform.isWindows) {
-      return await fluent.showDialog<bool>(
-            context: context,
-            barrierDismissible: false,
-            builder: (dialogContext) => fluent.ContentDialog(
-              title: Text(title),
-              content: Text(message),
-              actions: [
-                fluent.Button(
-                  onPressed: () => Navigator.of(dialogContext).pop(false),
-                  child: Text(I18n.of(dialogContext).cancel),
-                ),
-                fluent.FilledButton(
-                  onPressed: () => Navigator.of(dialogContext).pop(true),
-                  child: Text(I18n.of(dialogContext).ok),
-                ),
-              ],
-            ),
-          ) ??
-          false;
-    }
-
-    return await showDialog<bool>(
-          context: context,
-          barrierDismissible: false,
-          builder: (dialogContext) => AlertDialog(
-            title: Text(title),
-            content: Text(message),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(dialogContext).pop(false),
-                child: Text(I18n.of(dialogContext).cancel),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.of(dialogContext).pop(true),
-                child: Text(I18n.of(dialogContext).ok),
-              ),
-            ],
-          ),
-        ) ??
-        false;
+    return _confirm(
+      context,
+      title: isChinese ? '发现历史下载记录' : 'Historical download found',
+      message: isChinese
+          ? '文件名与过去下载的「${task.title}」（Pixiv #${task.illustId}）相同，'
+                '但无法确认图片内容是否被替换或编辑。是否打开该作品？'
+          : 'The file name matches a previous download, "${task.title}" '
+                '(Pixiv #${task.illustId}), but the image bytes cannot be '
+                'verified. Open this work?',
+    );
   }
 
   Future<bool> _confirmPerceptualMatch(
     BuildContext context,
     DownloadPerceptualIdentityMatch match,
-  ) async {
+  ) {
     final isChinese = Localizations.localeOf(context).languageCode == 'zh';
     final percent = (match.similarity * 100).toStringAsFixed(1);
-    final title = isChinese ? '发现本地近似图片' : 'Local near-duplicate found';
-    final message = isChinese
-        ? '这张图与本机已索引的 Pixiv #${match.identity.illustId} '
-              '在缩放/重新压缩特征上约为 $percent% 相似。'
-              '感知哈希不能证明原作，是否打开该作品？'
-        : 'This image is about $percent% similar to locally indexed Pixiv '
-              '#${match.identity.illustId} after resize/re-encode matching. '
-              'A perceptual hash is not proof of authorship. Open it?';
-
-    if (Platform.isWindows) {
-      return await fluent.showDialog<bool>(
-            context: context,
-            barrierDismissible: false,
-            builder: (dialogContext) => fluent.ContentDialog(
-              title: Text(title),
-              content: Text(message),
-              actions: [
-                fluent.Button(
-                  onPressed: () => Navigator.of(dialogContext).pop(false),
-                  child: Text(I18n.of(dialogContext).cancel),
-                ),
-                fluent.FilledButton(
-                  onPressed: () => Navigator.of(dialogContext).pop(true),
-                  child: Text(I18n.of(dialogContext).ok),
-                ),
-              ],
-            ),
-          ) ??
-          false;
-    }
-    return await showDialog<bool>(
-          context: context,
-          barrierDismissible: false,
-          builder: (dialogContext) => AlertDialog(
-            title: Text(title),
-            content: Text(message),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(dialogContext).pop(false),
-                child: Text(I18n.of(dialogContext).cancel),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.of(dialogContext).pop(true),
-                child: Text(I18n.of(dialogContext).ok),
-              ),
-            ],
-          ),
-        ) ??
-        false;
+    return _confirm(
+      context,
+      title: isChinese ? '发现本地近似图片' : 'Local near-duplicate found',
+      message: isChinese
+          ? '这张图与本机已索引的 Pixiv #${match.identity.illustId} '
+                '在缩放/重新压缩特征上约为 $percent% 相似。'
+                '感知哈希不能证明原作，是否打开该作品？'
+          : 'This image is about $percent% similar to locally indexed Pixiv '
+                '#${match.identity.illustId} after resize/re-encode matching. '
+                'A perceptual hash is not proof of authorship. Open it?',
+    );
   }
 
-  Future<bool> _confirmExternalUpload(BuildContext context) async {
-    final title = I18n.of(context).reverse_image_external_title;
-    final message = I18n.of(context).reverse_image_external_message;
+  Future<bool> _confirmExternalUpload(BuildContext context) => _confirm(
+    context,
+    title: I18n.of(context).reverse_image_external_title,
+    message: I18n.of(context).reverse_image_external_message,
+  );
+
+  /// One OK/Cancel confirmation, rendered with Fluent widgets on Windows and
+  /// Material elsewhere. Dismissal counts as "cancel".
+  Future<bool> _confirm(
+    BuildContext context, {
+    required String title,
+    required String message,
+  }) async {
     if (Platform.isWindows) {
       return await fluent.showDialog<bool>(
             context: context,
@@ -2155,7 +2113,6 @@ abstract class SauceStoreBase with Store {
           ) ??
           false;
     }
-
     return await showDialog<bool>(
           context: context,
           barrierDismissible: false,
@@ -2238,89 +2195,69 @@ abstract class SauceStoreBase with Store {
   }
 }
 
-Map<String, Object>? _prepareExternalSearchImage(Uint8List originImageBytes) {
-  if (originImageBytes.isEmpty ||
-      originImageBytes.length > SauceStoreBase._maxInputBytes) {
-    return const <String, Object>{'error': 'unsupported'};
+/// Decodes the first frame within the input and pixel bounds and applies
+/// EXIF orientation. Returns `'unsupported'` or `'pixel_limit'` on failure.
+(img.Image?, String?) _decodeBoundedOriented(Uint8List bytes) {
+  if (bytes.isEmpty || bytes.length > SauceStoreBase._maxInputBytes) {
+    return (null, 'unsupported');
   }
-  final extension = _detectImageExtension(originImageBytes);
-  if (extension == null) {
-    return const <String, Object>{'error': 'unsupported'};
+  final decoder = img.findDecoderForData(bytes);
+  final info = decoder?.startDecode(bytes);
+  if (decoder == null || info == null || info.width <= 0 || info.height <= 0) {
+    return (null, 'unsupported');
   }
-
-  final decoder = img.findDecoderForData(originImageBytes);
-  if (decoder == null) {
-    return const <String, Object>{'error': 'unsupported'};
+  if (info.width * info.height > SauceStoreBase._maxDecodedPixels) {
+    return (null, 'pixel_limit');
   }
-  final info = decoder.startDecode(originImageBytes);
-  if (info == null || info.width <= 0 || info.height <= 0) {
-    return const <String, Object>{'error': 'unsupported'};
-  }
-  final pixels = info.width * info.height;
-  if (pixels > SauceStoreBase._maxDecodedPixels) {
-    return const <String, Object>{'error': 'pixel_limit'};
-  }
-  final originImage = decoder.decodeFrame(0);
-  if (originImage == null) {
-    return const <String, Object>{'error': 'unsupported'};
-  }
+  final frame = decoder.decodeFrame(0);
+  if (frame == null) return (null, 'unsupported');
   final oriented =
-      originImage.exif.imageIfd.hasOrientation &&
-          originImage.exif.imageIfd.orientation != 1
-      ? img.bakeOrientation(originImage)
-      : originImage;
+      frame.exif.imageIfd.hasOrientation && frame.exif.imageIfd.orientation != 1
+      ? img.bakeOrientation(frame)
+      : frame;
+  return (oriented, null);
+}
+
+/// Re-encodes [image] as a metadata-free JPEG so EXIF, ICC and text chunks
+/// of the user's original file never reach a third party.
+Map<String, Object> _encodeSanitizedJpeg(img.Image image) {
+  image.exif = img.ExifData();
+  image.iccProfile = null;
+  image.textData = null;
+  return {'bytes': img.encodeJpg(image, quality: 90), 'extension': 'jpg'};
+}
+
+Map<String, Object>? _prepareExternalSearchImage(Uint8List originImageBytes) {
+  if (_detectImageExtension(originImageBytes) == null) {
+    return const <String, Object>{'error': 'unsupported'};
+  }
+  final (oriented, error) = _decodeBoundedOriented(originImageBytes);
+  if (oriented == null) return <String, Object>{'error': error!};
+  const maxSide = SauceStoreBase._maxSearchDimension;
   final longestSide = oriented.width > oriented.height
       ? oriented.width
       : oriented.height;
-  final resized = longestSide <= SauceStoreBase._maxSearchDimension
+  final resized = longestSide <= maxSide
       ? oriented
       : img.copyResize(
           oriented,
-          width:
-              (oriented.width *
-                      SauceStoreBase._maxSearchDimension /
-                      longestSide)
-                  .round(),
-          height:
-              (oriented.height *
-                      SauceStoreBase._maxSearchDimension /
-                      longestSide)
-                  .round(),
+          width: (oriented.width * maxSide / longestSide).round(),
+          height: (oriented.height * maxSide / longestSide).round(),
         );
-  // Always re-encode the external-search copy. This strips EXIF/text metadata
-  // and prevents an original gallery file from being sent to a third party.
-  resized.exif = img.ExifData();
-  resized.iccProfile = null;
-  resized.textData = null;
-  return {'bytes': img.encodeJpg(resized, quality: 90), 'extension': 'jpg'};
+  return _encodeSanitizedJpeg(resized);
 }
 
 Map<String, Object>? _prepareExternalSearchCrop(Map<String, Object> request) {
   final bytes = request['bytes'];
   final probeName = request['probe'];
   if (bytes is! Uint8List || probeName is! String) return null;
-  if (bytes.length > SauceStoreBase._maxInputBytes) return null;
-  ReverseImageProbeKind? probe;
-  for (final value in ReverseImageProbeKind.values) {
-    if (value.name == probeName) {
-      probe = value;
-      break;
-    }
-  }
+  final probe = ReverseImageProbeKind.values
+      .where((value) => value.name == probeName)
+      .firstOrNull;
   if (probe == null || probe == ReverseImageProbeKind.full) return null;
 
-  final decoder = img.findDecoderForData(bytes);
-  if (decoder == null) return null;
-  final info = decoder.startDecode(bytes);
-  if (info == null || info.width <= 0 || info.height <= 0) return null;
-  if (info.width * info.height > SauceStoreBase._maxDecodedPixels) return null;
-  final image = decoder.decodeFrame(0);
-  if (image == null) return null;
-  final oriented =
-      image.exif.imageIfd.hasOrientation && image.exif.imageIfd.orientation != 1
-      ? img.bakeOrientation(image)
-      : image;
-
+  final (oriented, _) = _decodeBoundedOriented(bytes);
+  if (oriented == null) return null;
   final layout = planReverseImageProbeLayout(
     oriented.width,
     oriented.height,
@@ -2342,12 +2279,7 @@ Map<String, Object>? _prepareExternalSearchCrop(Map<String, Object> request) {
       height: layout.outputContentHeight,
     );
   }
-
-  final prepared = content;
-  prepared.exif = img.ExifData();
-  prepared.iccProfile = null;
-  prepared.textData = null;
-  return {'bytes': img.encodeJpg(prepared, quality: 90), 'extension': 'jpg'};
+  return _encodeSanitizedJpeg(content);
 }
 
 /// Exposes the pure preparation isolate entry point to focused regression

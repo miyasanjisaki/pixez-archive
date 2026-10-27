@@ -251,6 +251,18 @@ class ReverseImageProviderHit {
     this.title,
     this.thumbnailUrl,
   });
+
+  /// Returns this hit attributed to Pixiv work [id], keeping the original
+  /// provider, similarity and source URL as evidence.
+  ReverseImageProviderHit withIllustId(int id) => ReverseImageProviderHit(
+    providerId: providerId,
+    probe: probe,
+    illustId: id,
+    similarity: similarity,
+    sourceUrl: sourceUrl,
+    title: title,
+    thumbnailUrl: thumbnailUrl,
+  );
 }
 
 class ReverseImageProviderResponse {

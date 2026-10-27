@@ -29,7 +29,7 @@ void main() {
     );
     expect(
       result.single.thumbnailUrl,
-      'https://safe.iqdb.org/thumbnails/12345678.jpg',
+      'https://iqdb.org/thumbnails/12345678.jpg',
     );
   });
 
@@ -75,7 +75,7 @@ void main() {
 
     expect(
       parseIqdbResults(html).single.thumbnailUrl,
-      'https://safe.iqdb.org/thumbs/larger.jpg',
+      'https://iqdb.org/thumbs/larger.jpg',
     );
   });
 
@@ -105,7 +105,7 @@ void main() {
         <table class="nomatch"><tr><th>No relevant matches</th></tr></table>
         <table>
           <tr><th>Best match</th></tr>
-          <tr><td class="image"><a href="https://safe.iqdb.org/foo">x</a></td></tr>
+          <tr><td class="image"><a href="https://iqdb.org/foo">x</a></td></tr>
           <tr><td>[99%]</td></tr>
         </table>
       </div>
@@ -165,7 +165,7 @@ void main() {
           <tr><th>Best match</th></tr>
           <tr><td class="image">
             <a href="https://danbooru.donmai.us/posts/91">
-              <img src="http://safe.iqdb.org/thumbs/91.jpg">
+              <img src="http://iqdb.org/thumbs/91.jpg">
             </a>
           </td></tr>
           <tr><td>[96%]</td></tr>

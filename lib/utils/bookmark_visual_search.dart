@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'image_perceptual_hash.dart';
+import 'visual_descriptor.dart';
 
 enum BookmarkVisibility { public, private }
 
@@ -120,10 +121,14 @@ class BookmarkVisualFingerprint {
   final String? differenceHash;
   final Map<BookmarkVisualRegion, String> regionDifferenceHashes;
 
+  /// Grayscale layout descriptor used for crop-tolerant window matching.
+  final VisualThumb? thumb;
+
   const BookmarkVisualFingerprint({
     required this.sha256,
     required this.differenceHash,
     this.regionDifferenceHashes = const <BookmarkVisualRegion, String>{},
+    this.thumb,
   });
 
   Iterable<MapEntry<BookmarkVisualRegion, String>> get validDifferenceHashes {
@@ -138,6 +143,24 @@ class BookmarkVisualFingerprint {
 abstract interface class BookmarkVisualFingerprintComputer {
   Future<BookmarkVisualFingerprint> compute(Uint8List bytes);
 }
+
+/// Persists candidate fingerprints by image URL so a repeated scan does not
+/// download and decode thousands of previews again.
+abstract interface class BookmarkVisualFingerprintCache {
+  Future<BookmarkVisualFingerprint?> lookup(String imageUrl);
+
+  Future<void> store(String imageUrl, BookmarkVisualFingerprint fingerprint);
+}
+
+/// Window-correlation score at or above which a candidate is collected.
+const double bookmarkVisualCandidateScore = 0.80;
+
+/// Window-correlation score at or above which an unambiguous candidate is
+/// offered as the match (still subject to user confirmation).
+const double bookmarkVisualMatchScore = 0.92;
+
+/// Minimum lead over the runner-up for a window-correlation match.
+const double bookmarkVisualMatchLead = 0.03;
 
 class BookmarkVisualIndexRecord {
   final String sha256;
@@ -229,6 +252,9 @@ class BookmarkVisualProgress {
   final int imageFailures;
   final int candidateCount;
 
+  /// Images whose fingerprint came from the local cache (no download).
+  final int imagesFromCache;
+
   const BookmarkVisualProgress({
     this.visibility,
     this.pagesLoaded = 0,
@@ -237,6 +263,7 @@ class BookmarkVisualProgress {
     this.imagesCompared = 0,
     this.imageFailures = 0,
     this.candidateCount = 0,
+    this.imagesFromCache = 0,
   });
 
   BookmarkVisualProgress copyWith({
@@ -247,6 +274,7 @@ class BookmarkVisualProgress {
     int? imagesCompared,
     int? imageFailures,
     int? candidateCount,
+    int? imagesFromCache,
   }) {
     return BookmarkVisualProgress(
       visibility: visibility ?? this.visibility,
@@ -256,6 +284,7 @@ class BookmarkVisualProgress {
       imagesCompared: imagesCompared ?? this.imagesCompared,
       imageFailures: imageFailures ?? this.imageFailures,
       candidateCount: candidateCount ?? this.candidateCount,
+      imagesFromCache: imagesFromCache ?? this.imagesFromCache,
     );
   }
 }
@@ -269,6 +298,9 @@ class BookmarkVisualCandidate {
   final String imageUrl;
   final BookmarkVisualRegion region;
 
+  /// Best window-correlation score, when both images had a descriptor.
+  final double? visualScore;
+
   const BookmarkVisualCandidate({
     required this.illustId,
     required this.pageIndex,
@@ -277,10 +309,18 @@ class BookmarkVisualCandidate {
     required this.distance,
     required this.imageUrl,
     this.region = BookmarkVisualRegion.full,
+    this.visualScore,
   });
 
-  double? get similarity =>
-      distance == null ? null : 1 - distance! / differenceHashBitCount;
+  double? get similarity {
+    final hashSimilarity = distance == null
+        ? null
+        : 1 - distance! / differenceHashBitCount;
+    final visual = visualScore?.clamp(0.0, 1.0).toDouble();
+    if (visual == null) return hashSimilarity;
+    if (hashSimilarity == null) return visual;
+    return math.max(hashSimilarity, visual);
+  }
 }
 
 class BookmarkVisualSearchResult {
@@ -325,6 +365,7 @@ class BookmarkVisualSearchService {
   final BookmarkVisualFingerprintComputer fingerprintComputer;
   final BookmarkVisualSearchLimits limits;
   final bool allowEarlyExactPerceptualMatch;
+  final BookmarkVisualFingerprintCache? fingerprintCache;
 
   BookmarkVisualSearchService({
     required this.source,
@@ -332,6 +373,7 @@ class BookmarkVisualSearchService {
     required this.fingerprintComputer,
     this.limits = const BookmarkVisualSearchLimits(),
     this.allowEarlyExactPerceptualMatch = true,
+    this.fingerprintCache,
   }) {
     limits.validate();
   }
@@ -349,6 +391,7 @@ class BookmarkVisualSearchService {
     final seenImages = <String>{};
     var hitLimit = false;
     var stopAllForQuantityLimit = false;
+    _cacheHits = 0;
 
     void emit() {
       if (onProgress == null) return;
@@ -498,10 +541,8 @@ class BookmarkVisualSearchService {
             (job) async {
               if (token.isCancelled) return;
               try {
-                final bytes = await imageFetcher.fetch(job.image, token);
-                if (token.isCancelled) return;
-                final fingerprint = await fingerprintComputer.compute(bytes);
-                if (token.isCancelled) return;
+                final fingerprint = await _candidateFingerprint(job, token);
+                if (fingerprint == null || token.isCancelled) return;
                 final exactBytes =
                     fingerprint.sha256.toLowerCase() ==
                     queryFingerprint.sha256.toLowerCase();
@@ -524,7 +565,12 @@ class BookmarkVisualSearchService {
                     }
                   }
                 }
-                if (!exactBytes && distance == null) {
+                final queryThumb = queryFingerprint.thumb;
+                final candidateThumb = fingerprint.thumb;
+                final visualScore = queryThumb == null || candidateThumb == null
+                    ? null
+                    : scoreVisualMatch(queryThumb, candidateThumb)?.score;
+                if (!exactBytes && distance == null && visualScore == null) {
                   progress = progress.copyWith(
                     imageFailures: progress.imageFailures + 1,
                   );
@@ -533,7 +579,9 @@ class BookmarkVisualSearchService {
                 }
                 if (exactBytes ||
                     (distance != null &&
-                        distance <= _candidateCollectionMaximumDistance)) {
+                        distance <= _candidateCollectionMaximumDistance) ||
+                    (visualScore != null &&
+                        visualScore >= bookmarkVisualCandidateScore)) {
                   rawCandidates.add(
                     _RawCandidate(
                       illustId: job.work.illustId,
@@ -543,12 +591,14 @@ class BookmarkVisualSearchService {
                       distance: distance,
                       imageUrl: job.image.url,
                       region: matchedRegion,
+                      visualScore: visualScore,
                     ),
                   );
                 }
                 progress = progress.copyWith(
                   imagesCompared: progress.imagesCompared + 1,
                   candidateCount: rawCandidates.length,
+                  imagesFromCache: _cacheHits,
                 );
               } on Object {
                 if (!token.isCancelled) {
@@ -660,6 +710,40 @@ class BookmarkVisualSearchService {
     );
   }
 
+  Future<BookmarkVisualFingerprint?> _candidateFingerprint(
+    _ImageJob job,
+    BookmarkVisualCancellationToken token,
+  ) async {
+    final cache = fingerprintCache;
+    if (cache != null) {
+      BookmarkVisualFingerprint? cached;
+      try {
+        cached = await cache.lookup(job.image.url);
+      } on Object {
+        cached = null;
+      }
+      if (cached != null && cached.thumb != null) {
+        _cacheHits++;
+        // Cached comparisons are CPU-only; yield so the progress UI can draw.
+        if (_cacheHits % 40 == 0) await Future<void>.delayed(Duration.zero);
+        return cached;
+      }
+    }
+    final bytes = await imageFetcher.fetch(job.image, token);
+    if (token.isCancelled) return null;
+    final fingerprint = await fingerprintComputer.compute(bytes);
+    if (cache != null && !token.isCancelled) {
+      try {
+        await cache.store(job.image.url, fingerprint);
+      } on Object {
+        // A cache write failure must never fail the scan.
+      }
+    }
+    return fingerprint;
+  }
+
+  int _cacheHits = 0;
+
   BookmarkVisualCandidate? _uniqueZeroDistance(
     List<_RawCandidate> rawCandidates,
   ) {
@@ -668,11 +752,14 @@ class BookmarkVisualSearchService {
     // A regional hash is intentionally candidate-only evidence. Do not stop a
     // long scan early for a crop collision; finish the bounded/cancellable scan
     // and apply the normal runner-up gap before asking the user to confirm it.
-    return match != null &&
-            match.distance == 0 &&
-            match.region == BookmarkVisualRegion.full
-        ? match
-        : null;
+    if (match == null) return null;
+    if (match.distance == 0 && match.region == BookmarkVisualRegion.full) {
+      return match;
+    }
+    // A near-perfect, unambiguous window correlation is as strong as a zero
+    // dHash distance and lets an uncached first scan stop early.
+    final visual = match.visualScore;
+    return visual != null && visual >= 0.97 ? match : null;
   }
 
   BookmarkVisualCandidate? _uniqueExactBytes(
@@ -733,11 +820,26 @@ class BookmarkVisualSearchService {
       return _Resolution(candidates: candidates, ambiguous: true);
     }
 
+    final hashResolution = _resolveByHash(bestByWork.values, candidates);
+    if (hashResolution.match != null) return hashResolution;
+    final visualResolution = _resolveByVisual(bestByWork.values, candidates);
+    if (visualResolution.match != null) return visualResolution;
+    return _Resolution(
+      candidates: candidates,
+      ambiguous: hashResolution.ambiguous || visualResolution.ambiguous,
+    );
+  }
+
+  _Resolution _resolveByHash(
+    Iterable<_RawCandidate> bestByWork,
+    List<BookmarkVisualCandidate> candidates,
+  ) {
     final perceptual =
-        bestByWork.values
-            .where((candidate) => candidate.distance != null)
-            .toList()
-          ..sort(_compareRawCandidates);
+        bestByWork.where((candidate) => candidate.distance != null).toList()
+          ..sort((a, b) {
+            final distance = a.distance!.compareTo(b.distance!);
+            return distance != 0 ? distance : _compareRawCandidates(a, b);
+          });
     if (perceptual.isEmpty) return _Resolution(candidates: candidates);
     final best = perceptual.first;
     if (best.distance! > limits.maximumDistance) {
@@ -745,6 +847,25 @@ class BookmarkVisualSearchService {
     }
     if (perceptual.length > 1 &&
         perceptual[1].distance! - best.distance! < limits.minimumDistanceGap) {
+      return _Resolution(candidates: candidates, ambiguous: true);
+    }
+    return _Resolution(match: _toCandidate(best), candidates: candidates);
+  }
+
+  _Resolution _resolveByVisual(
+    Iterable<_RawCandidate> bestByWork,
+    List<BookmarkVisualCandidate> candidates,
+  ) {
+    final visual =
+        bestByWork.where((candidate) => candidate.visualScore != null).toList()
+          ..sort((a, b) => b.visualScore!.compareTo(a.visualScore!));
+    if (visual.isEmpty) return _Resolution(candidates: candidates);
+    final best = visual.first;
+    if (best.visualScore! < bookmarkVisualMatchScore) {
+      return _Resolution(candidates: candidates);
+    }
+    if (visual.length > 1 &&
+        best.visualScore! - visual[1].visualScore! < bookmarkVisualMatchLead) {
       return _Resolution(candidates: candidates, ambiguous: true);
     }
     return _Resolution(match: _toCandidate(best), candidates: candidates);
@@ -852,13 +973,21 @@ int _compareRawCandidates(_RawCandidate first, _RawCandidate second) {
   if (first.exactBytes != second.exactBytes) {
     return first.exactBytes ? -1 : 1;
   }
-  final distance = (first.distance ?? differenceHashBitCount + 1).compareTo(
-    second.distance ?? differenceHashBitCount + 1,
-  );
-  if (distance != 0) return distance;
+  final score = _rankScore(second).compareTo(_rankScore(first));
+  if (score != 0) return score;
   final id = first.illustId.compareTo(second.illustId);
   if (id != 0) return id;
   return first.pageIndex.compareTo(second.pageIndex);
+}
+
+/// One comparable confidence for ranking: dHash similarity or window score,
+/// whichever is stronger. With only dHash evidence this keeps the original
+/// distance ordering.
+double _rankScore(_RawCandidate candidate) {
+  final hash = candidate.distance == null
+      ? -1.0
+      : 1 - candidate.distance! / differenceHashBitCount;
+  return math.max(hash, candidate.visualScore ?? -1.0);
 }
 
 BookmarkVisualCandidate _toCandidate(_RawCandidate raw) {
@@ -875,6 +1004,7 @@ BookmarkVisualCandidate _toCandidate(_RawCandidate raw) {
     distance: raw.distance,
     imageUrl: raw.imageUrl,
     region: raw.region,
+    visualScore: raw.visualScore,
   );
 }
 
@@ -898,6 +1028,7 @@ class _RawCandidate {
   final int? distance;
   final String imageUrl;
   final BookmarkVisualRegion region;
+  final double? visualScore;
 
   const _RawCandidate({
     required this.illustId,
@@ -907,6 +1038,7 @@ class _RawCandidate {
     required this.distance,
     required this.imageUrl,
     required this.region,
+    this.visualScore,
   });
 }
 

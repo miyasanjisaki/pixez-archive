@@ -6,7 +6,11 @@ import 'package:rhttp/rhttp.dart' as r;
 
 void main() {
   test('Android known-host plans use one strict system-trust fallback', () {
-    for (final host in const <String>['saucenao.com', 'safe.iqdb.org']) {
+    for (final host in const <String>[
+      'saucenao.com',
+      'iqdb.org',
+      'safe.iqdb.org',
+    ]) {
       final plan = PixezNetworkSettings.externalTlsHostPlan(
         host,
         isAndroid: true,

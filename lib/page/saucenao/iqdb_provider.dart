@@ -11,7 +11,14 @@ import 'package:pixez/utils/reverse_image_search.dart';
 class IqdbSearchProvider implements ReverseImageSearchProvider {
   static const int maxInputBytes = 8 * 1024 * 1024;
   static const Duration defaultTotalTimeout = Duration(seconds: 45);
-  static const List<String> _safeServiceIds = ['1', '2', '3', '11'];
+
+  /// IQDB indexes queried for every search: Danbooru, Konachan, yande.re,
+  /// Gelbooru, Sankaku Channel and Anime-Pictures.
+  ///
+  /// `safe.iqdb.org` silently drops explicit posts, which made a large share
+  /// of Pixiv R-18 works impossible to find. The main site searches the same
+  /// boorus without that filter.
+  static const List<String> _serviceIds = ['1', '2', '3', '4', '5', '11'];
 
   final ExternalSearchDioClient _dioClient;
   final Duration totalTimeout;
@@ -27,7 +34,7 @@ class IqdbSearchProvider implements ReverseImageSearchProvider {
        _dioClient =
            externalSearchClient ??
            ExternalSearchDioClient(
-             baseUrl: 'https://safe.iqdb.org',
+             baseUrl: 'https://iqdb.org',
              networkModeProvider: networkModeProvider ?? () => networkMode,
              injectedDio: dio,
            );
@@ -141,7 +148,7 @@ class IqdbSearchProvider implements ReverseImageSearchProvider {
 
 FormData _buildFormData(ReverseImageQuery query) {
   final form = FormData();
-  for (final serviceId in IqdbSearchProvider._safeServiceIds) {
+  for (final serviceId in IqdbSearchProvider._serviceIds) {
     form.fields.add(MapEntry('service[]', serviceId));
   }
   form.files.add(

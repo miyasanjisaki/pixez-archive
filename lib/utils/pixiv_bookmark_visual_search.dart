@@ -8,11 +8,15 @@ import 'package:flutter/foundation.dart' as foundation;
 import 'package:image/image.dart' as image;
 import 'package:pixez/er/hoster.dart';
 import 'package:pixez/main.dart';
+import 'package:pixez/models/bookmark_library.dart';
+import 'package:pixez/models/bookmark_visual_fingerprint_cache.dart';
 import 'package:pixez/models/download_identity_index.dart';
 import 'package:pixez/network/api_client.dart';
+import 'package:pixez/network/bookmark_library_client.dart';
 import 'package:pixez/utils/bookmark_visual_search.dart';
 import 'package:pixez/utils/image_perceptual_hash.dart';
 import 'package:pixez/utils/reverse_image_search.dart';
+import 'package:pixez/utils/visual_descriptor.dart';
 
 const String _pixivBookmarkPath = '/v1/user/bookmarks/illust';
 const String _pixivApiHost = 'app-api.pixiv.net';
@@ -137,6 +141,88 @@ class PixivCurrentUserBookmarkVisualSource
   }
 }
 
+/// Serves bookmark pages from the local [BookmarkLibrary] instead of the
+/// Pixiv API. Only used when the library has completed a full sync and was
+/// just refreshed incrementally, so it lists the same works as the API.
+class LibraryBookmarkVisualSource implements CurrentUserBookmarkVisualSource {
+  final BookmarkLibrary library;
+  final int? Function() currentUserIdProvider;
+  final int pageSize;
+
+  const LibraryBookmarkVisualSource({
+    required this.library,
+    required this.currentUserIdProvider,
+    this.pageSize = 60,
+  });
+
+  @override
+  int? get currentUserId => currentUserIdProvider();
+
+  @override
+  Future<BookmarkVisualPage> loadPage({
+    required int expectedUserId,
+    required BookmarkVisibility visibility,
+    required BookmarkVisualPageCursor? cursor,
+    required BookmarkVisualCancellationToken cancellationToken,
+  }) async {
+    if (currentUserIdProvider() != expectedUserId) {
+      throw const BookmarkVisualAuthorizationException(
+        'The selected Pixiv account changed during bookmark search',
+      );
+    }
+    final offset = cursor?.value ?? 0;
+    final rows = await library.page(
+      expectedUserId,
+      visibility == BookmarkVisibility.public
+          ? BookmarkRestrict.public
+          : BookmarkRestrict.private,
+      offset: offset,
+      limit: pageSize,
+    );
+    final page = parsePixivBookmarkVisualPage(
+      <String, dynamic>{'illusts': rows, 'next_url': null},
+      expectedUserId: expectedUserId,
+      visibility: visibility,
+    );
+    return BookmarkVisualPage(
+      works: page.works,
+      nextCursor: rows.length < pageSize
+          ? null
+          : BookmarkVisualPageCursor.offset(offset + pageSize),
+    );
+  }
+}
+
+/// Uses the local bookmark library when it is already complete: one cheap
+/// incremental sync replaces up to hundreds of bookmark-page requests.
+Future<CurrentUserBookmarkVisualSource> _preferredBookmarkSource(
+  CurrentUserBookmarkVisualSource apiSource,
+) async {
+  final userId = apiSource.currentUserId;
+  if (userId == null || userId <= 0) return apiSource;
+  try {
+    final stats = await bookmarkLibrary.stats(userId);
+    if (!stats.isComplete) return apiSource;
+    final token = BookmarkSyncCancelToken();
+    final refreshed = await bookmarkLibrary
+        .sync(userId, cancelToken: token)
+        .timeout(
+          const Duration(seconds: 20),
+          onTimeout: () {
+            token.cancel();
+            return const BookmarkSyncResult(cancelled: true);
+          },
+        );
+    if (refreshed.error != null || refreshed.cancelled) return apiSource;
+    return LibraryBookmarkVisualSource(
+      library: bookmarkLibrary,
+      currentUserIdProvider: () => apiSource.currentUserId,
+    );
+  } on Object {
+    return apiSource;
+  }
+}
+
 class PixivBookmarkVisualImageFetcher implements BookmarkVisualImageFetcher {
   final Dio client;
   final int maximumImageBytes;
@@ -221,6 +307,7 @@ class FlutterBookmarkVisualFingerprintComputer
             regionDifferenceHashes: _parseBookmarkVisualRegionHashes(
               fingerprints['regionDhashes'],
             ),
+            thumb: VisualThumb.decode(fingerprints['thumb'] as Uint8List?),
           ),
         );
       } catch (error, stackTrace) {
@@ -324,6 +411,7 @@ Map<String, Object?> _computeBookmarkVisualFingerprints(Uint8List bytes) {
       'sha256': sha256,
       'dhash': hashes[BookmarkVisualRegion.full.name],
       'regionDhashes': hashes,
+      'thumb': computeVisualThumb(oriented).encode(),
     };
   } on Object {
     return <String, Object?>{
@@ -398,9 +486,12 @@ class PixivBookmarkVisualSearchController {
     imageClient.httpClientAdapter =
         await ApiClient.createDirectPixivImageClient();
 
-    final source = PixivCurrentUserBookmarkVisualSource(
-      client: apiClient,
-      currentUserIdProvider: () => int.tryParse(accountStore.now?.userId ?? ''),
+    final source = await _preferredBookmarkSource(
+      PixivCurrentUserBookmarkVisualSource(
+        client: apiClient,
+        currentUserIdProvider: () =>
+            int.tryParse(accountStore.now?.userId ?? ''),
+      ),
     );
     final fingerprintComputer = FlutterBookmarkVisualFingerprintComputer();
     final service = BookmarkVisualSearchService(
@@ -412,6 +503,7 @@ class PixivBookmarkVisualSearchController {
       fingerprintComputer: fingerprintComputer,
       limits: limits,
       allowEarlyExactPerceptualMatch: allowEarlyExactPerceptualMatch,
+      fingerprintCache: bookmarkVisualFingerprintCache,
     );
     return PixivBookmarkVisualSearchController._(
       service: service,

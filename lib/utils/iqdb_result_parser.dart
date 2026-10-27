@@ -3,7 +3,7 @@ import 'package:html/parser.dart' show parse;
 import 'package:pixez/utils/pixiv_image_identity.dart';
 import 'package:pixez/utils/reverse_image_search.dart';
 
-final Uri _iqdbOrigin = Uri.parse('https://safe.iqdb.org/');
+final Uri _iqdbOrigin = Uri.parse('https://iqdb.org/');
 
 class IqdbResponseException implements Exception {
   final String message;
@@ -170,7 +170,7 @@ String? _normalizeExternalUrl(String value) {
     return null;
   }
   final host = uri.host.toLowerCase();
-  if (host.isEmpty || host == 'safe.iqdb.org' || host.endsWith('.iqdb.org')) {
+  if (host.isEmpty || host == 'iqdb.org' || host.endsWith('.iqdb.org')) {
     return null;
   }
   return uri.toString();

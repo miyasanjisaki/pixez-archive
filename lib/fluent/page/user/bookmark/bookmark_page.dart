@@ -24,6 +24,7 @@ import 'package:pixez/fluent/lighting/fluent_lighting_page.dart';
 import 'package:pixez/lighting/lighting_store.dart';
 import 'package:pixez/main.dart';
 import 'package:pixez/network/api_client.dart';
+import 'package:pixez/fluent/page/user/bookmark/bookmark_search_page.dart';
 import 'package:pixez/fluent/page/user/bookmark/tag/user_bookmark_tag_page.dart';
 
 class BookmarkPage extends StatefulWidget {
@@ -61,8 +62,8 @@ class _BookmarkPageState extends State<BookmarkPage>
     _scrollController = ScrollController();
     restrict = widget.restrict;
     futureGet = ApiForceSource(
-        futureGet: (e) =>
-            apiClient.getBookmarksIllust(widget.id, restrict, null));
+      futureGet: (e) => apiClient.getBookmarksIllust(widget.id, restrict, null),
+    );
     super.initState();
     subscription = topStore.topStream.listen((event) {
       if (event == "302") {
@@ -89,11 +90,9 @@ class _BookmarkPageState extends State<BookmarkPage>
               source: futureGet,
               scrollController: _scrollController,
               isNested: widget.isNested,
-              header: Container(
-                height: 45,
-              ),
+              header: Container(height: 45),
             ),
-            buildTopChip(context)
+            buildTopChip(context),
           ],
         );
       }
@@ -120,14 +119,22 @@ class _BookmarkPageState extends State<BookmarkPage>
               if (index == 0)
                 setState(() {
                   futureGet = ApiForceSource(
-                      futureGet: (bool e) => apiClient.getBookmarksIllust(
-                          widget.id, restrict = 'public', null));
+                    futureGet: (bool e) => apiClient.getBookmarksIllust(
+                      widget.id,
+                      restrict = 'public',
+                      null,
+                    ),
+                  );
                 });
               if (index == 1)
                 setState(() {
                   futureGet = ApiForceSource(
-                      futureGet: (bool e) => apiClient.getBookmarksIllust(
-                          widget.id, restrict = 'private', null));
+                    futureGet: (bool e) => apiClient.getBookmarksIllust(
+                      widget.id,
+                      restrict = 'private',
+                      null,
+                    ),
+                  );
                 });
             },
           ),
@@ -148,12 +155,26 @@ class _BookmarkPageState extends State<BookmarkPage>
                 String restrict = result['restrict'];
                 setState(() {
                   futureGet = ApiForceSource(
-                      futureGet: (bool e) => apiClient.getBookmarksIllust(
-                          widget.id, restrict, tag));
+                    futureGet: (bool e) =>
+                        apiClient.getBookmarksIllust(widget.id, restrict, tag),
+                  );
                 });
               },
               icon: Icon(FluentIcons.sort),
             ),
+          ),
+          IconButton(
+            onPressed: () => Leader.push(
+              context,
+              FluentBookmarkSearchPage(userId: widget.id),
+              icon: const Icon(FluentIcons.search),
+              title: Text(
+                Localizations.localeOf(context).languageCode == 'zh'
+                    ? '搜索收藏'
+                    : 'Search bookmarks',
+              ),
+            ),
+            icon: const Icon(FluentIcons.search),
           ),
         ],
       ),
@@ -172,8 +193,9 @@ class _BookmarkPageState extends State<BookmarkPage>
       String restrict = result['restrict'];
       setState(() {
         futureGet = ApiForceSource(
-            futureGet: (bool e) =>
-                apiClient.getBookmarksIllust(widget.id, restrict, tag));
+          futureGet: (bool e) =>
+              apiClient.getBookmarksIllust(widget.id, restrict, tag),
+        );
       });
     }
   }

@@ -23,6 +23,7 @@ import 'package:pixez/main.dart';
 import 'package:pixez/models/illust.dart';
 import 'package:pixez/models/illust_series_detail.dart';
 import 'package:pixez/network/api_client.dart';
+import 'package:pixez/network/bookmark_library_client.dart';
 import 'package:pixez/page/history/history_store.dart';
 import 'package:pixez/utils/haptic_util.dart';
 
@@ -160,6 +161,11 @@ abstract class _IllustStoreBase with Store {
     } else {
       try {
         await apiClient.postUnLikeIllust(illusts!.id);
+        // Keep the local bookmark search index in step with Pixiv.
+        final userId = int.tryParse(accountStore.now?.userId ?? '');
+        if (userId != null) {
+          bookmarkLibrary.remove(userId, illusts!.id).ignore();
+        }
         illusts!.isBookmarked = false;
         isBookmark = false;
         state = 0;

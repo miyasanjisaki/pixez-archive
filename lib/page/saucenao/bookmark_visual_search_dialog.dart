@@ -206,10 +206,12 @@ class _BookmarkSearchProgressDialogState
         ? '$visibility\n已读取 ${_progress.pagesLoaded} 页 · '
               '${_progress.imagesCompared}/${_progress.imagesScheduled} 张图\n'
               '候选 ${_progress.candidateCount} · 读取失败 ${_progress.imageFailures}'
+              '${_progress.imagesFromCache > 0 ? ' · 本地缓存 ${_progress.imagesFromCache}' : ''}'
         : '$visibility\n${_progress.pagesLoaded} pages · '
               '${_progress.imagesCompared}/${_progress.imagesScheduled} images\n'
               '${_progress.candidateCount} candidates · '
-              '${_progress.imageFailures} read failures';
+              '${_progress.imageFailures} read failures'
+              '${_progress.imagesFromCache > 0 ? ' · ${_progress.imagesFromCache} cached' : ''}';
 
     final content = Column(
       mainAxisSize: MainAxisSize.min,
@@ -351,10 +353,14 @@ Future<BookmarkVisualCandidateDecision> showBookmarkVisualCandidatesDialog({
     final scope = candidate.visibility == BookmarkVisibility.private
         ? (chinese ? '非公开收藏' : 'Private bookmark')
         : (chinese ? '公开收藏' : 'Public bookmark');
-    final distance = candidate.distance == null
+    final similarity = candidate.similarity;
+    final evidence = candidate.kind == BookmarkVisualMatchKind.exactBytes
         ? (chinese ? '字节完全一致' : 'Exact bytes')
-        : 'dHash ${candidate.distance}/64';
-    return '$scope · $distance · p${candidate.pageIndex}';
+        : similarity == null
+        ? 'dHash ${candidate.distance}/64'
+        : (chinese ? '相似度 ' : 'Similarity ') +
+              '${(similarity * 100).toStringAsFixed(1)}%';
+    return '$scope · $evidence · p${candidate.pageIndex}';
   }
 
   if (Platform.isWindows) {

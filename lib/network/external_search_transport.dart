@@ -85,7 +85,9 @@ Uri _validatedExternalBaseUri(String baseUrl) {
 }
 
 bool _isDartIoFallbackOrigin(Uri uri) {
-  return (uri.host == 'saucenao.com' || uri.host == 'safe.iqdb.org') &&
+  return (uri.host == 'saucenao.com' ||
+          uri.host == 'iqdb.org' ||
+          uri.host == 'safe.iqdb.org') &&
       uri.port == 443 &&
       (uri.path.isEmpty || uri.path == '/') &&
       !uri.hasQuery &&
