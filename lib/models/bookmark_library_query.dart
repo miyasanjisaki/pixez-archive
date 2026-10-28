@@ -22,12 +22,22 @@ class BookmarkLibraryQuery {
   final BookmarkAgeFilter age;
   final BookmarkLibrarySort sort;
 
+  /// Exact Pixiv tag (original spelling) chosen from the tag chips.
+  final String? tag;
+
+  /// Artist chosen from the artist picker; [artistName] is display-only.
+  final int? artistId;
+  final String? artistName;
+
   const BookmarkLibraryQuery({
     this.text = '',
     this.type,
     this.restrict,
     this.age = BookmarkAgeFilter.all,
     this.sort = BookmarkLibrarySort.bookmarkedNewest,
+    this.tag,
+    this.artistId,
+    this.artistName,
   });
 
   BookmarkLibraryQuery copyWith({
@@ -38,13 +48,58 @@ class BookmarkLibraryQuery {
     bool clearRestrict = false,
     BookmarkAgeFilter? age,
     BookmarkLibrarySort? sort,
+    String? tag,
+    bool clearTag = false,
+    int? artistId,
+    String? artistName,
+    bool clearArtist = false,
   }) => BookmarkLibraryQuery(
     text: text ?? this.text,
     type: clearType ? null : (type ?? this.type),
     restrict: clearRestrict ? null : (restrict ?? this.restrict),
     age: age ?? this.age,
     sort: sort ?? this.sort,
+    tag: clearTag ? null : (tag ?? this.tag),
+    artistId: clearArtist ? null : (artistId ?? this.artistId),
+    artistName: clearArtist ? null : (artistName ?? this.artistName),
   );
+}
+
+class BookmarkTagFacet {
+  final String name;
+  final String? translatedName;
+  final int count;
+
+  const BookmarkTagFacet({
+    required this.name,
+    required this.count,
+    this.translatedName,
+  });
+}
+
+class BookmarkArtistFacet {
+  final int id;
+  final String name;
+  final String? avatarUrl;
+  final int count;
+
+  const BookmarkArtistFacet({
+    required this.id,
+    required this.name,
+    required this.count,
+    this.avatarUrl,
+  });
+}
+
+/// Tag and artist counts across the local library, most used first.
+class BookmarkLibraryFacets {
+  final List<BookmarkTagFacet> tags;
+  final List<BookmarkArtistFacet> artists;
+
+  const BookmarkLibraryFacets({
+    this.tags = const <BookmarkTagFacet>[],
+    this.artists = const <BookmarkArtistFacet>[],
+  });
 }
 
 class BookmarkLibrarySearchResult {

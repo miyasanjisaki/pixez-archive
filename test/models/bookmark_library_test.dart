@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as path;
 import 'package:pixez/models/bookmark_library.dart';
@@ -11,6 +13,7 @@ Map<String, dynamic> _illust(
   int bookmarks = 0,
   List<String> tags = const <String>[],
   String artist = 'artist',
+  int artistId = 1,
 }) => <String, dynamic>{
   'id': id,
   'title': title,
@@ -20,7 +23,14 @@ Map<String, dynamic> _illust(
   'total_view': bookmarks * 10,
   'create_date':
       '2024-01-${(id % 28 + 1).toString().padLeft(2, '0')}T00:00:00+09:00',
-  'user': <String, dynamic>{'id': 1, 'name': artist, 'account': 'acc'},
+  'user': <String, dynamic>{
+    'id': artistId,
+    'name': artist,
+    'account': 'acc',
+    'profile_image_urls': <String, dynamic>{
+      'medium': 'https://i.pximg.net/user-profile/$artistId.jpg',
+    },
+  },
   'tags': [
     for (final tag in tags)
       <String, dynamic>{'name': tag, 'translated_name': null},
@@ -190,5 +200,100 @@ void main() {
       const BookmarkLibraryQuery(),
     )).illusts.map((illust) => illust['id']);
     expect(order, <int>[6, 5, 4, 3, 2, 1]);
+  });
+
+  test(
+    'facets count tags and artists; tag and artist filters are exact',
+    () async {
+      pixiv.bookmarks[BookmarkRestrict.public]!.addAll([
+        _illust(4, tags: ['初音ミク', 'R-18'], artist: 'Alice', artistId: 10),
+        _illust(3, tags: ['初音ミク', 'VOCALOID'], artist: 'Alice', artistId: 10),
+        _illust(2, tags: ['初音ミク大好き'], artist: 'Bob', artistId: 20),
+        _illust(1, tags: ['VOCALOID'], artist: 'Carol', artistId: 30),
+      ]);
+      await library.sync(user);
+
+      final facets = await library.facets(user);
+      expect(facets.tags.map((tag) => tag.name).take(2), <String>[
+        'VOCALOID',
+        '初音ミク',
+      ]);
+      expect(facets.tags.any((tag) => tag.name == 'R-18'), isFalse);
+      expect(facets.artists.first.id, 10);
+      expect(facets.artists.first.count, 2);
+      expect(facets.artists.first.avatarUrl, contains('/10.jpg'));
+
+      Future<List<int>> ids(BookmarkLibraryQuery query) async =>
+          (await library.search(
+            user,
+            query,
+          )).illusts.map((illust) => illust['id'] as int).toList();
+
+      // Exact tag: "初音ミク大好き" must not match "初音ミク".
+      expect(await ids(const BookmarkLibraryQuery(tag: '初音ミク')), <int>[4, 3]);
+      expect(await ids(const BookmarkLibraryQuery(artistId: 30)), <int>[1]);
+      expect(
+        await ids(const BookmarkLibraryQuery(tag: 'vocaloid', artistId: 10)),
+        <int>[3],
+      );
+      final cleared = const BookmarkLibraryQuery(
+        tag: 'x',
+        artistId: 1,
+        artistName: 'n',
+      ).copyWith(clearTag: true, clearArtist: true);
+      expect(cleared.tag, isNull);
+      expect(cleared.artistId, isNull);
+      expect(cleared.artistName, isNull);
+    },
+  );
+
+  test('a v1 database is upgraded and backfilled without resync', () async {
+    final directory = await databaseFactoryFfi.getDatabasesPath();
+    final dbPath = path.join(directory, 'bookmark_library_test.db');
+    final legacy = await databaseFactoryFfi.openDatabase(
+      dbPath,
+      options: OpenDatabaseOptions(
+        version: 1,
+        onCreate: (db, _) async {
+          await db.execute('''
+CREATE TABLE bookmark_library_item (
+  user_id INTEGER NOT NULL, illust_id INTEGER NOT NULL, restrict TEXT NOT NULL,
+  sort_key INTEGER NOT NULL, type TEXT NOT NULL, x_restrict INTEGER NOT NULL,
+  total_bookmarks INTEGER NOT NULL, total_view INTEGER NOT NULL,
+  create_date TEXT NOT NULL, search_text TEXT NOT NULL, json TEXT NOT NULL,
+  PRIMARY KEY (user_id, illust_id))''');
+          await db.execute('''
+CREATE TABLE bookmark_library_state (
+  user_id INTEGER NOT NULL, restrict TEXT NOT NULL,
+  complete INTEGER NOT NULL DEFAULT 0, resume_url TEXT, last_sync INTEGER,
+  PRIMARY KEY (user_id, restrict))''');
+        },
+      ),
+    );
+    await legacy.insert('bookmark_library_item', <String, Object?>{
+      'user_id': user,
+      'illust_id': 7,
+      'restrict': 'public',
+      'sort_key': 1,
+      'type': 'illust',
+      'x_restrict': 0,
+      'total_bookmarks': 0,
+      'total_view': 0,
+      'create_date': '',
+      'search_text': '7',
+      'json': jsonEncode(
+        _illust(7, tags: ['風景'], artist: 'Dana', artistId: 70),
+      ),
+    });
+    await legacy.close();
+
+    final facets = await library.facets(user);
+    expect(facets.artists.single.name, 'Dana');
+    expect(facets.tags.single.name, '風景');
+    final found = await library.search(
+      user,
+      const BookmarkLibraryQuery(tag: '風景', artistId: 70),
+    );
+    expect(found.total, 1);
   });
 }

@@ -194,6 +194,39 @@ class _FluentBookmarkSearchPageState extends State<FluentBookmarkSearchPage> {
                   },
                   (age) => _controller.updateQuery(query.copyWith(age: age)),
                 ),
+                _combo<String?>(
+                  query.tag,
+                  {
+                    null: _t('全部标签', 'All tags'),
+                    if (query.tag != null) query.tag: '#${query.tag}',
+                    for (final tag in _controller.facets.tags.take(100))
+                      tag.name: '#${tag.name} (${tag.count})',
+                  },
+                  (tag) => _controller.updateQuery(
+                    query.copyWith(tag: tag, clearTag: tag == null),
+                  ),
+                ),
+                _combo<int?>(
+                  query.artistId,
+                  {
+                    null: _t('全部画师', 'All artists'),
+                    if (query.artistId != null)
+                      query.artistId: query.artistName ?? '#${query.artistId}',
+                    for (final artist in _controller.facets.artists.take(100))
+                      artist.id: '${artist.name} (${artist.count})',
+                  },
+                  (artistId) => _controller.updateQuery(
+                    artistId == null
+                        ? query.copyWith(clearArtist: true)
+                        : query.copyWith(
+                            artistId: artistId,
+                            artistName: _controller.facets.artists
+                                .where((artist) => artist.id == artistId)
+                                .firstOrNull
+                                ?.name,
+                          ),
+                  ),
+                ),
                 Text(status),
                 if (result != null)
                   Text(

@@ -114,10 +114,15 @@ class BookmarkSearchController extends ChangeNotifier {
 
   Future<void> _refreshStats() async {
     final value = await library.stats(userId);
+    final facetValue = await library.facets(userId);
     if (_disposed) return;
     stats = value;
+    facets = facetValue;
     _notify();
   }
+
+  /// Tag/artist counts for the quick filters, refreshed with [stats].
+  BookmarkLibraryFacets facets = const BookmarkLibraryFacets();
 
   String _describe(Object error) {
     if (error is DioException) {

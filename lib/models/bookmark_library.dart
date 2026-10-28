@@ -56,7 +56,7 @@ class BookmarkLibrary {
     final databasesPath = await getDatabasesPath();
     return openDatabase(
       join(databasesPath, databaseName),
-      version: 1,
+      version: 2,
       onCreate: (database, version) async {
         await database.execute('''
 CREATE TABLE $_items (
@@ -71,10 +71,14 @@ CREATE TABLE $_items (
   create_date TEXT NOT NULL,
   search_text TEXT NOT NULL,
   json TEXT NOT NULL,
+  $_facetColumnsSql,
   PRIMARY KEY (user_id, illust_id)
 )''');
         await database.execute(
           'CREATE INDEX ${_items}_order ON $_items (user_id, sort_key DESC)',
+        );
+        await database.execute(
+          'CREATE INDEX ${_items}_artist ON $_items (user_id, artist_id)',
         );
         await database.execute('''
 CREATE TABLE $_state (
@@ -86,6 +90,96 @@ CREATE TABLE $_state (
   PRIMARY KEY (user_id, restrict)
 )''');
       },
+      onUpgrade: (database, oldVersion, newVersion) async {
+        if (oldVersion < 2) {
+          // v2 adds artist/tag columns for the facet filters. Backfill them
+          // from the stored JSON so existing users need no resync.
+          for (final column in _facetColumnsSql.split(',')) {
+            await database.execute('ALTER TABLE $_items ADD ${column.trim()}');
+          }
+          await database.execute(
+            'CREATE INDEX ${_items}_artist ON $_items (user_id, artist_id)',
+          );
+          final rows = await database.query(
+            _items,
+            columns: const <String>['user_id', 'illust_id', 'json'],
+          );
+          final batch = database.batch();
+          for (final row in rows) {
+            final illust = Map<String, dynamic>.from(
+              jsonDecode(row['json']! as String) as Map,
+            );
+            batch.update(
+              _items,
+              _facetValues(illust),
+              where: 'user_id = ? AND illust_id = ?',
+              whereArgs: <Object?>[row['user_id'], row['illust_id']],
+            );
+          }
+          await batch.commit(noResult: true);
+        }
+      },
+    );
+  }
+
+  /// Most used tags and artists across the whole local library, for the
+  /// quick-filter chips and the artist picker.
+  Future<BookmarkLibraryFacets> facets(int userId) async {
+    final database = await _database();
+    final artistRows = await database.rawQuery(
+      'SELECT artist_id, MAX(artist_name) AS name, MAX(artist_avatar) AS avatar, '
+      'COUNT(*) AS n FROM $_items WHERE user_id = ? AND artist_id > 0 '
+      'GROUP BY artist_id ORDER BY n DESC, name ASC',
+      <Object>[userId],
+    );
+    final tagRows = await database.query(
+      _items,
+      columns: const <String>['tags'],
+      where: 'user_id = ?',
+      whereArgs: <Object>[userId],
+    );
+    final counts = <String, int>{};
+    final translations = <String, String>{};
+    for (final row in tagRows) {
+      final raw = row['tags'];
+      if (raw is! String || raw.isEmpty) continue;
+      for (final entry in jsonDecode(raw) as List) {
+        final pair = entry as List;
+        final name = pair.first as String;
+        counts[name] = (counts[name] ?? 0) + 1;
+        final translated = pair.length > 1 ? pair[1] : null;
+        if (translated is String && translated.isNotEmpty) {
+          translations[name] = translated;
+        }
+      }
+    }
+    final tags =
+        counts.entries
+            .where((entry) => !_hiddenFacetTags.contains(entry.key))
+            .map(
+              (entry) => BookmarkTagFacet(
+                name: entry.key,
+                translatedName: translations[entry.key],
+                count: entry.value,
+              ),
+            )
+            .toList()
+          ..sort((a, b) {
+            final byCount = b.count.compareTo(a.count);
+            return byCount != 0 ? byCount : a.name.compareTo(b.name);
+          });
+    return BookmarkLibraryFacets(
+      tags: tags,
+      artists: artistRows
+          .map(
+            (row) => BookmarkArtistFacet(
+              id: row['artist_id']! as int,
+              name: (row['name'] as String?) ?? '',
+              avatarUrl: row['avatar'] as String?,
+              count: row['n']! as int,
+            ),
+          )
+          .toList(growable: false),
     );
   }
 
@@ -152,6 +246,15 @@ CREATE TABLE $_state (
         where.add('x_restrict > 0');
       case BookmarkAgeFilter.all:
         break;
+    }
+    if (query.artistId != null) {
+      where.add('artist_id = ?');
+      args.add(query.artistId!);
+    }
+    final tag = query.tag;
+    if (tag != null && tag.isNotEmpty) {
+      where.add("tag_keys LIKE ? ESCAPE '\\'");
+      args.add('%\n${_escapeLike(normalizeBookmarkSearchText(tag))}\n%');
     }
     for (final token in parseBookmarkSearchText(query.text)) {
       where.add(
@@ -560,8 +663,47 @@ CREATE TABLE $_state (
       'create_date': '${illust['create_date'] ?? ''}',
       'search_text': buildBookmarkSearchText(illust),
       'json': jsonEncode(illust),
+      ..._facetValues(illust),
     };
   }
+}
+
+/// Columns added in schema v2 for the artist and tag filters.
+const String _facetColumnsSql =
+    'artist_id INTEGER NOT NULL DEFAULT 0, artist_name TEXT, '
+    'artist_avatar TEXT, tags TEXT, tag_keys TEXT';
+
+/// Pixiv's age-rating tags are already covered by the R-18 filter.
+const Set<String> _hiddenFacetTags = <String>{'R-18', 'R-18G'};
+
+Map<String, Object?> _facetValues(Map<String, dynamic> illust) {
+  final user = illust['user'];
+  final userMap = user is Map ? user : const <String, dynamic>{};
+  final avatars = userMap['profile_image_urls'];
+  final tags = <List<String?>>[];
+  final rawTags = illust['tags'];
+  if (rawTags is List) {
+    for (final tag in rawTags) {
+      if (tag is! Map || tag['name'] is! String) continue;
+      final translated = tag['translated_name'];
+      tags.add(<String?>[
+        tag['name'] as String,
+        if (translated is String && translated.isNotEmpty) translated,
+      ]);
+    }
+  }
+  final artistId = userMap['id'];
+  return <String, Object?>{
+    'artist_id': artistId is int ? artistId : int.tryParse('$artistId') ?? 0,
+    'artist_name': userMap['name'] is String ? userMap['name'] : null,
+    'artist_avatar': avatars is Map && avatars['medium'] is String
+        ? avatars['medium']
+        : null,
+    'tags': jsonEncode(tags),
+    // Newline-wrapped, normalised names so a tag filter is an exact match.
+    'tag_keys':
+        '\n${tags.map((tag) => normalizeBookmarkSearchText(tag.first!)).join('\n')}\n',
+  };
 }
 
 List<Map<String, dynamic>> _illustMaps(Map<String, dynamic> json) {

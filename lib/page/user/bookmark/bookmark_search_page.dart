@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:pixez/lighting/lighting_page.dart';
 import 'package:pixez/lighting/lighting_store.dart';
 import 'package:pixez/models/bookmark_library.dart';
+import 'package:pixez/page/user/bookmark/bookmark_facet_widgets.dart';
 import 'package:pixez/page/user/bookmark/bookmark_search_controller.dart';
 
 /// Search inside the signed-in user's own illustration/manga bookmarks.
@@ -109,10 +110,28 @@ class _BookmarkSearchPageState extends State<BookmarkSearchPage> {
         children: [
           _buildStatus(context),
           _buildFilters(context, query),
+          BookmarkTagChipsRow(
+            tags: _controller.facets.tags,
+            selectedTag: query.tag,
+            onSelected: (tag) => _controller.updateQuery(
+              _controller.query.copyWith(tag: tag, clearTag: tag == null),
+            ),
+          ),
           const Divider(height: 1),
           Expanded(child: _buildResults(context)),
         ],
       ),
+    );
+  }
+
+  Future<void> _pickArtist() async {
+    final artist = await showBookmarkArtistPicker(
+      context,
+      _controller.facets.artists,
+    );
+    if (artist == null || !mounted) return;
+    _controller.updateQuery(
+      _controller.query.copyWith(artistId: artist.id, artistName: artist.name),
     );
   }
 
@@ -229,6 +248,37 @@ class _BookmarkSearchPageState extends State<BookmarkSearchPage> {
                 visualDensity: VisualDensity.compact,
               ),
             ),
+          ),
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: query.artistId == null
+                ? ActionChip(
+                    avatar: const Icon(Icons.person_search_outlined, size: 18),
+                    label: Text(_t('画师', 'Artist')),
+                    visualDensity: VisualDensity.compact,
+                    onPressed: _pickArtist,
+                  )
+                : InputChip(
+                    selected: true,
+                    showCheckmark: false,
+                    avatar: BookmarkArtistAvatar(
+                      url: _controller.facets.artists
+                          .where((artist) => artist.id == query.artistId)
+                          .firstOrNull
+                          ?.avatarUrl,
+                      size: 22,
+                    ),
+                    label: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 140),
+                      child: Text(
+                        query.artistName ?? '#${query.artistId}',
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    visualDensity: VisualDensity.compact,
+                    onPressed: _pickArtist,
+                    onDeleted: () => update(query.copyWith(clearArtist: true)),
+                  ),
           ),
           choice(_t('全部', 'All'), null, query.type, () {
             update(query.copyWith(clearType: true));
