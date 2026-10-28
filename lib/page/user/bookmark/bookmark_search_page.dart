@@ -72,47 +72,29 @@ class _BookmarkSearchPageState extends State<BookmarkSearchPage> {
     return Scaffold(
       appBar: AppBar(
         titleSpacing: 0,
-        title: TextField(
-          controller: _text,
-          textInputAction: TextInputAction.search,
-          decoration: InputDecoration(
-            hintText: _t('搜索标题、作者、标签或 PID', 'Title, artist, tag or ID'),
-            border: InputBorder.none,
-            suffixIcon: _text.text.isEmpty
-                ? null
-                : IconButton(
-                    tooltip: _t('清除', 'Clear'),
-                    icon: const Icon(Icons.close),
-                    onPressed: () {
-                      _text.clear();
-                      _controller.updateQuery(query.copyWith(text: ''));
-                    },
-                  ),
-          ),
-          onChanged: (value) => _controller.updateQuery(
-            _controller.query.copyWith(text: value),
-            debounce: true,
-          ),
-          onSubmitted: (value) =>
-              _controller.updateQuery(_controller.query.copyWith(text: value)),
-        ),
+        title: _buildSearchField(context),
         actions: [
-          IconButton(
-            tooltip: _t('同步收藏', 'Sync bookmarks'),
-            icon: const Icon(Icons.sync),
-            onPressed: _controller.isSyncing ? null : () => _controller.sync(),
-          ),
           PopupMenuButton<String>(
+            tooltip: _t('更多', 'More'),
             onSelected: (value) async {
-              if (value == 'full') {
-                await _controller.sync(full: true);
-              } else if (value == 'clear') {
-                await _confirmClear();
+              switch (value) {
+                case 'sync':
+                  await _controller.sync();
+                case 'full':
+                  await _controller.sync(full: true);
+                case 'clear':
+                  await _confirmClear();
               }
             },
             itemBuilder: (_) => [
               PopupMenuItem(
+                value: 'sync',
+                enabled: !_controller.isSyncing,
+                child: Text(_t('同步收藏', 'Sync bookmarks')),
+              ),
+              PopupMenuItem(
                 value: 'full',
+                enabled: !_controller.isSyncing,
                 child: Text(_t('完整重新同步', 'Full resync')),
               ),
               PopupMenuItem(
@@ -133,6 +115,18 @@ class _BookmarkSearchPageState extends State<BookmarkSearchPage> {
       ),
     );
   }
+
+  Widget _buildSearchField(BuildContext context) => BookmarkSearchField(
+    controller: _text,
+    hintText: _t('搜索标题、作者、标签或 PID', 'Title, artist, tag or ID'),
+    clearTooltip: _t('清除', 'Clear'),
+    onChanged: (value) => _controller.updateQuery(
+      _controller.query.copyWith(text: value),
+      debounce: true,
+    ),
+    onSubmitted: (value) =>
+        _controller.updateQuery(_controller.query.copyWith(text: value)),
+  );
 
   Widget _buildStatus(BuildContext context) {
     final theme = Theme.of(context);
@@ -370,5 +364,91 @@ class _BookmarkSearchPageState extends State<BookmarkSearchPage> {
       ),
     );
     if (confirmed == true) await _controller.clearLibrary();
+  }
+}
+
+/// Rounded search field matching the main search page's pill style.
+class BookmarkSearchField extends StatelessWidget {
+  final TextEditingController controller;
+  final String hintText;
+  final String clearTooltip;
+  final ValueChanged<String> onChanged;
+  final ValueChanged<String> onSubmitted;
+
+  const BookmarkSearchField({
+    super.key,
+    required this.controller,
+    required this.hintText,
+    required this.clearTooltip,
+    required this.onChanged,
+    required this.onSubmitted,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    return Padding(
+      padding: const EdgeInsets.only(right: 4),
+      child: Material(
+        color: colorScheme.surfaceContainerHigh,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(24),
+          side: BorderSide(
+            color: colorScheme.outlineVariant.withValues(alpha: 0.65),
+          ),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: SizedBox(
+          height: 44,
+          child: ValueListenableBuilder<TextEditingValue>(
+            valueListenable: controller,
+            builder: (context, value, _) => TextField(
+              controller: controller,
+              textInputAction: TextInputAction.search,
+              textAlignVertical: TextAlignVertical.center,
+              style: textTheme.bodyLarge,
+              decoration: InputDecoration(
+                isCollapsed: true,
+                border: InputBorder.none,
+                hintText: hintText,
+                hintMaxLines: 1,
+                hintStyle: textTheme.bodyLarge?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                prefixIcon: Icon(
+                  Icons.search,
+                  color: colorScheme.onSurfaceVariant,
+                ),
+                prefixIconConstraints: const BoxConstraints(
+                  minWidth: 44,
+                  minHeight: 44,
+                ),
+                suffixIcon: value.text.isEmpty
+                    ? null
+                    : IconButton(
+                        tooltip: clearTooltip,
+                        visualDensity: VisualDensity.compact,
+                        padding: EdgeInsets.zero,
+                        icon: const Icon(Icons.close, size: 20),
+                        onPressed: () {
+                          controller.clear();
+                          onChanged('');
+                        },
+                      ),
+                suffixIconConstraints: const BoxConstraints(
+                  minWidth: 40,
+                  minHeight: 40,
+                ),
+                contentPadding: const EdgeInsets.only(right: 12),
+              ),
+              onChanged: onChanged,
+              onSubmitted: onSubmitted,
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
