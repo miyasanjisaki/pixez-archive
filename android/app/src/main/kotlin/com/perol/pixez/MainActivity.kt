@@ -119,6 +119,12 @@ class MainActivity : FlutterActivity() {
             splashScreen.setOnExitAnimationListener { splashScreenView -> splashScreenView.remove() }
         }
         super.onCreate(savedInstanceState)
+        if (savedInstanceState == null) refreshClickedWidget(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        refreshClickedWidget(intent)
     }
 
     override fun onResume() {
@@ -772,18 +778,33 @@ class MainActivity : FlutterActivity() {
         )
     }
 
+    private fun refreshClickedWidget(intent: Intent) {
+        val id = intent.getIntExtra(
+            AppWidgetManager.EXTRA_APPWIDGET_ID, AppWidgetManager.INVALID_APPWIDGET_ID
+        )
+        if (id == AppWidgetManager.INVALID_APPWIDGET_ID) return
+        val provider = AppWidgetManager.getInstance(this).getAppWidgetInfo(id)?.provider ?: return
+        if (provider.packageName != packageName) return
+        val shown = widgetHistory(this, id).getLong(LAST_SHOWN_ILLUST, 0L)
+        if (shown == intent.getLongExtra("iid", -1L)) sendWidgetUpdate(provider, intArrayOf(id))
+    }
+
     private fun refreshAppWidgets() {
         val appWidgetManager = AppWidgetManager.getInstance(this)
         listOf(SquareAppWidget::class.java, IllustCardAppWidget::class.java).forEach { widgetClass ->
             val componentName = ComponentName(this, widgetClass)
             val widgetIds = appWidgetManager.getAppWidgetIds(componentName)
             if (widgetIds.isNotEmpty()) {
-                sendBroadcast(Intent(AppWidgetManager.ACTION_APPWIDGET_UPDATE).apply {
-                    component = componentName
-                    putExtra(AppWidgetManager.EXTRA_APPWIDGET_IDS, widgetIds)
-                })
+                sendWidgetUpdate(componentName, widgetIds)
             }
         }
+    }
+
+    private fun sendWidgetUpdate(provider: ComponentName, ids: IntArray) {
+        sendBroadcast(Intent(AppWidgetManager.ACTION_APPWIDGET_UPDATE).apply {
+            component = provider
+            putExtra(AppWidgetManager.EXTRA_APPWIDGET_IDS, ids)
+        })
     }
 
     override fun onActivityResult(

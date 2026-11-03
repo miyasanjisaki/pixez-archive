@@ -2,58 +2,42 @@ package com.perol.pixez.glance
 
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
-import java.io.File
+
+private const val ROTATION_POOL_SIZE = 200
 
 data class GlanceIllust(
-    val id: String,
     val illustId: Long,
-    val title: String,
-    val userId: String,
-    val userName: String,
+    val title: String?,
+    val userName: String?,
     val pictureUrl: String
 )
 
 class GlanceDBManager {
-    companion object {
-        const val TABLE_NAME = "glanceillustpersist"
-        const val TABLE_FILE_NAME = "glanceillustpersist.db"
-        const val COLUMN_ID = "id"
-        const val COLUMN_TITLE = "title"
-        const val COLUMN_ILLUST_ID = "illust_id"
-        const val COLUMN_USER_ID = "user_id"
-        const val COLUMN_PICTURE_URL = "picture_url"
-        const val COLUMN_USER_NAME = "user_name"
-        const val COLUMN_TYPE = "type"
-    }
+    fun fetch(context: Context, type: String, seen: Set<String>, lastId: Long): GlanceIllust? {
+        val file = context.getDatabasePath("glanceillustpersist.db")
+        if (!file.isFile) return null
 
-    fun fetch(context: Context, type: String = "rank"): ArrayList<GlanceIllust> {
-        val dummyDatabaseName = "tekartik_sqflite.db"
-        val file: File = context.getDatabasePath(dummyDatabaseName)
-        val path = file.parent
-        val database = SQLiteDatabase.openDatabase(
-            "${path}/${TABLE_FILE_NAME}", null,
-            SQLiteDatabase.OPEN_READONLY
-        )
-        val cursor =
-            database.rawQuery(
-                "select * from $TABLE_NAME WHERE $COLUMN_TYPE = ? ORDER BY RANDOM() LIMIT 1",
+        return SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READONLY).use { db ->
+            // The table keeps every list ever browsed; rotate through the
+            // most recent works so new recommendations actually show up.
+            val rows = db.rawQuery(
+                "SELECT illust_id, MAX(id) AS last FROM glanceillustpersist WHERE type = ? " +
+                    "GROUP BY illust_id ORDER BY last DESC LIMIT $ROTATION_POOL_SIZE",
                 arrayOf(type)
-            )
-        cursor.moveToFirst()
-        val result = arrayListOf<GlanceIllust>()
-        do {
-            kotlin.runCatching {
-                val illustId = cursor.getLong(cursor.getColumnIndexOrThrow(COLUMN_ILLUST_ID))
-                val id = cursor.getString(cursor.getColumnIndexOrThrow(COLUMN_ID))
-                val userId = cursor.getString(cursor.getColumnIndexOrThrow(COLUMN_USER_ID))
-                val pictureUrl = cursor.getString(cursor.getColumnIndexOrThrow(COLUMN_PICTURE_URL))
-                val userName = cursor.getString(cursor.getColumnIndexOrThrow(COLUMN_USER_NAME))
-                val title = cursor.getString(cursor.getColumnIndexOrThrow(COLUMN_TITLE))
-                result.add(GlanceIllust(id, illustId, title, userId, userName, pictureUrl))
+            ).use { cursor ->
+                buildMap {
+                    while (cursor.moveToNext()) put(cursor.getLong(0), cursor.getLong(1))
+                }
             }
-        } while (cursor.moveToNext())
-        cursor.close()
-        database.close()
-        return result
+            val pool = rows.keys.filter { it.toString() !in seen }.ifEmpty { rows.keys.toList() }
+            val illustId = pool.filterNot { it == lastId }.randomOrNull() ?: pool.firstOrNull() ?: return null
+            db.rawQuery(
+                "SELECT title, user_name, picture_url FROM glanceillustpersist WHERE id = ?",
+                arrayOf(rows.getValue(illustId).toString())
+            ).use { cursor ->
+                if (!cursor.moveToFirst()) return null
+                GlanceIllust(illustId, cursor.getString(0), cursor.getString(1), cursor.getString(2))
+            }
+        }
     }
 }
